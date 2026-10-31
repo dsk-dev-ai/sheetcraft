@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::cell::{CellError, CellRef, CellValue};
 use crate::formula::{self, BinaryOp, Expr, UnaryOp};
 
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Sheet {
     cells: BTreeMap<CellRef, String>,
 }

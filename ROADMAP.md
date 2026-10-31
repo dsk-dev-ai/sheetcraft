@@ -30,9 +30,9 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Cell editing and keyboard navigation
 - [x] Formula bar
 - [x] Open and save CSV or XLSX from the desktop app
-- [ ] Copy and paste
+- [x] Copy and paste
 - [ ] Reference highlighting
-- [ ] Undo and redo
+- [x] Undo and redo
 - [ ] Instant startup benchmark under 100 ms
 
 ## v0.4 Everyday use

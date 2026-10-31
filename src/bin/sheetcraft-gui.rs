@@ -41,6 +41,8 @@ struct App {
     path: String,
     status: String,
     status_ok: bool,
+    undo: Vec<Sheet>,
+    redo: Vec<Sheet>,
 }
 
 impl App {
@@ -63,6 +65,8 @@ impl App {
             path: "budget.xlsx".to_string(),
             status: "Ready. Arrow keys move, Enter applies, Delete clears.".to_string(),
             status_ok: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -75,6 +79,7 @@ impl App {
     }
 
     fn commit(&mut self) {
+        let before = self.sheet.clone();
         if self.formula.is_empty() {
             self.sheet.clear(&self.selected);
             self.set_status(format!("Cleared {}", self.selected), true);
@@ -82,6 +87,77 @@ impl App {
             self.sheet.set(self.selected, self.formula.clone());
             self.set_status(format!("Updated {}", self.selected), true);
         }
+        self.record(before);
+    }
+
+    fn record(&mut self, before: Sheet) {
+        if before == self.sheet {
+            return;
+        }
+        self.undo.push(before);
+        if self.undo.len() > 100 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    fn undo(&mut self) {
+        let Some(previous) = self.undo.pop() else {
+            self.set_status("Nothing to undo".to_string(), false);
+            return;
+        };
+        let current = std::mem::replace(&mut self.sheet, previous);
+        self.redo.push(current);
+        self.sync_formula();
+        self.set_status(format!("Undid change at {}", self.selected), true);
+    }
+
+    fn redo(&mut self) {
+        let Some(next) = self.redo.pop() else {
+            self.set_status("Nothing to redo".to_string(), false);
+            return;
+        };
+        let current = std::mem::replace(&mut self.sheet, next);
+        self.undo.push(current);
+        self.sync_formula();
+        self.set_status(format!("Redid change at {}", self.selected), true);
+    }
+
+    fn copy(&mut self, ui: &mut egui::Ui) {
+        let text = self
+            .sheet
+            .raw(&self.selected)
+            .unwrap_or_default()
+            .to_string();
+        ui.ctx().copy_text(text);
+        self.set_status(format!("Copied {}", self.selected), true);
+    }
+
+    fn paste(&mut self, text: &str) {
+        let before = self.sheet.clone();
+        let mut count = 0;
+        for (row_offset, line) in text.lines().enumerate() {
+            let row = self.selected.row as usize + row_offset;
+            if row > ROWS {
+                break;
+            }
+            for (column_offset, field) in line.split('\t').enumerate() {
+                let column = self.selected.col as usize + column_offset;
+                if column > COLUMNS {
+                    break;
+                }
+                let reference = CellRef::new(row as u32, column as u32);
+                if field.is_empty() {
+                    self.sheet.clear(&reference);
+                } else {
+                    self.sheet.set(reference, field);
+                }
+                count += 1;
+            }
+        }
+        self.record(before);
+        self.sync_formula();
+        self.set_status(format!("Pasted {count} cells at {}", self.selected), true);
     }
 
     fn open(&mut self) {
@@ -89,6 +165,8 @@ impl App {
             Ok(sheet) => {
                 self.sheet = sheet;
                 self.selected = CellRef::new(1, 1);
+                self.undo.clear();
+                self.redo.clear();
                 self.sync_formula();
                 self.set_status(format!("Opened {}", self.path), true);
             }
@@ -132,9 +210,32 @@ impl App {
             self.move_selection(0, 1);
         }
         if ui.input(|input| input.key_pressed(Key::Delete)) {
+            let before = self.sheet.clone();
             self.sheet.clear(&self.selected);
             self.formula.clear();
+            self.record(before);
             self.set_status(format!("Cleared {}", self.selected), true);
+        }
+        if ui.input(|input| input.modifiers.command && input.key_pressed(Key::C)) {
+            self.copy(ui);
+        }
+        if let Some(text) = ui.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Paste(text) => Some(text.clone()),
+                _ => None,
+            })
+        }) {
+            self.paste(&text);
+        }
+        if ui.input(|input| input.modifiers.command && input.key_pressed(Key::Z)) {
+            if ui.input(|input| input.modifiers.shift) {
+                self.redo();
+            } else {
+                self.undo();
+            }
+        }
+        if ui.input(|input| input.modifiers.command && input.key_pressed(Key::Y)) {
+            self.redo();
         }
         if ui.input(|input| input.modifiers.command && input.key_pressed(Key::S)) {
             self.save();
@@ -165,6 +266,18 @@ impl App {
                     }
                     if ui.button("Save").clicked() {
                         self.save();
+                    }
+                    if ui
+                        .add_enabled(!self.undo.is_empty(), egui::Button::new("Undo"))
+                        .clicked()
+                    {
+                        self.undo();
+                    }
+                    if ui
+                        .add_enabled(!self.redo.is_empty(), egui::Button::new("Redo"))
+                        .clicked()
+                    {
+                        self.redo();
                     }
                     ui.separator();
                     ui.label(
@@ -364,7 +477,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(
-                                "Arrows move  |  Enter applies  |  Delete clears  |  Ctrl/Cmd+S saves",
+                                "Arrows move  |  Enter applies  |  Delete clears  |  Ctrl/Cmd+C/V copy-paste  |  Ctrl/Cmd+Z undo  |  Ctrl/Cmd+S saves",
                             )
                             .size(12.0)
                             .color(MUTED),
