@@ -17,6 +17,7 @@ const TEXT: Color32 = Color32::from_rgb(226, 232, 240);
 const MUTED: Color32 = Color32::from_rgb(148, 163, 184);
 const ACCENT: Color32 = Color32::from_rgb(52, 211, 153);
 const SELECTED: Color32 = Color32::from_rgb(6, 78, 59);
+const RANGE_SELECTED: Color32 = Color32::from_rgba_premultiplied(4, 49, 37, 170);
 const REFERENCE: Color32 = Color32::from_rgba_premultiplied(8, 31, 23, 38);
 const ERROR: Color32 = Color32::from_rgb(248, 113, 113);
 
@@ -38,6 +39,7 @@ fn main() -> eframe::Result {
 struct App {
     sheet: Sheet,
     selected: CellRef,
+    anchor: CellRef,
     formula: String,
     path: String,
     status: String,
@@ -62,6 +64,7 @@ impl App {
         Self {
             sheet,
             selected,
+            anchor: selected,
             formula,
             path: "budget.xlsx".to_string(),
             status: "Ready. Arrow keys move, Enter applies, Delete clears.".to_string(),
@@ -124,14 +127,41 @@ impl App {
         self.set_status(format!("Redid change at {}", self.selected), true);
     }
 
+    fn selection_bounds(&self) -> (u32, u32, u32, u32) {
+        (
+            self.anchor.row.min(self.selected.row),
+            self.anchor.col.min(self.selected.col),
+            self.anchor.row.max(self.selected.row),
+            self.anchor.col.max(self.selected.col),
+        )
+    }
+
+    fn selection_label(&self) -> String {
+        if self.anchor == self.selected {
+            self.selected.to_string()
+        } else {
+            let (top, left, bottom, right) = self.selection_bounds();
+            format!(
+                "{}:{}",
+                CellRef::new(top, left),
+                CellRef::new(bottom, right)
+            )
+        }
+    }
+
     fn copy(&mut self, ui: &mut egui::Ui) {
-        let text = self
-            .sheet
-            .raw(&self.selected)
-            .unwrap_or_default()
-            .to_string();
-        ui.ctx().copy_text(text);
-        self.set_status(format!("Copied {}", self.selected), true);
+        let (top, left, bottom, right) = self.selection_bounds();
+        let mut rows = Vec::new();
+        for row in top..=bottom {
+            let mut fields = Vec::new();
+            for column in left..=right {
+                let reference = CellRef::new(row, column);
+                fields.push(self.sheet.raw(&reference).unwrap_or_default().to_string());
+            }
+            rows.push(fields.join("\t"));
+        }
+        ui.ctx().copy_text(rows.join("\n"));
+        self.set_status(format!("Copied {}", self.selection_label()), true);
     }
 
     fn paste(&mut self, text: &str) {
@@ -166,6 +196,7 @@ impl App {
             Ok(sheet) => {
                 self.sheet = sheet;
                 self.selected = CellRef::new(1, 1);
+                self.anchor = self.selected;
                 self.undo.clear();
                 self.redo.clear();
                 self.sync_formula();
@@ -187,10 +218,13 @@ impl App {
         self.status_ok = ok;
     }
 
-    fn move_selection(&mut self, row_delta: isize, column_delta: isize) {
+    fn move_selection(&mut self, row_delta: isize, column_delta: isize, extend: bool) {
         let row = (self.selected.row as isize + row_delta).clamp(1, ROWS as isize);
         let column = (self.selected.col as isize + column_delta).clamp(1, COLUMNS as isize);
         self.selected = CellRef::new(row as u32, column as u32);
+        if !extend {
+            self.anchor = self.selected;
+        }
         self.sync_formula();
     }
 
@@ -198,24 +232,30 @@ impl App {
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
+        let extend = ui.input(|input| input.modifiers.shift);
         if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
-            self.move_selection(-1, 0);
+            self.move_selection(-1, 0, extend);
         }
         if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
-            self.move_selection(1, 0);
+            self.move_selection(1, 0, extend);
         }
         if ui.input(|input| input.key_pressed(Key::ArrowLeft)) {
-            self.move_selection(0, -1);
+            self.move_selection(0, -1, extend);
         }
         if ui.input(|input| input.key_pressed(Key::ArrowRight)) {
-            self.move_selection(0, 1);
+            self.move_selection(0, 1, extend);
         }
         if ui.input(|input| input.key_pressed(Key::Delete)) {
             let before = self.sheet.clone();
-            self.sheet.clear(&self.selected);
+            let (top, left, bottom, right) = self.selection_bounds();
+            for row in top..=bottom {
+                for column in left..=right {
+                    self.sheet.clear(&CellRef::new(row, column));
+                }
+            }
             self.formula.clear();
             self.record(before);
-            self.set_status(format!("Cleared {}", self.selected), true);
+            self.set_status(format!("Cleared {}", self.selection_label()), true);
         }
         if ui.input(|input| input.modifiers.command && input.key_pressed(Key::C)) {
             self.copy(ui);
@@ -282,7 +322,7 @@ impl App {
                     }
                     ui.separator();
                     ui.label(
-                        RichText::new(format!("Cell {}", self.selected))
+                        RichText::new(format!("Cell {}", self.selection_label()))
                             .monospace()
                             .color(ACCENT),
                     );
@@ -310,6 +350,7 @@ impl App {
     fn grid(&mut self, ui: &mut egui::Ui) {
         let sheet = &self.sheet;
         let selected = self.selected;
+        let (top, left, bottom, right) = self.selection_bounds();
         let references = formula::references(&self.formula);
         let mut clicked = None;
 
@@ -442,33 +483,43 @@ impl App {
                             painter.rect_filled(cell, 0.0, REFERENCE);
                         }
 
-                        if selected.row as usize > first_row
-                            && selected.row as usize <= last_row
-                            && selected.col as usize > first_column
-                            && selected.col as usize <= last_column
-                        {
-                            let cell = Rect::from_min_size(
-                                pos2(
-                                    body_left + (selected.col as usize - 1) as f32 * CELL_WIDTH,
-                                    body_top + (selected.row as usize - 1) as f32 * CELL_HEIGHT,
-                                ),
-                                vec2(CELL_WIDTH, CELL_HEIGHT),
-                            );
-                            painter.rect_filled(cell, 0.0, SELECTED);
-                            painter.rect_stroke(
-                                cell,
-                                0.0,
-                                Stroke::new(1.0, ACCENT),
-                                StrokeKind::Inside,
-                            );
-                            painter.text(
-                                cell.min + vec2(6.0, 4.0),
-                                Align2::LEFT_TOP,
-                                sheet.value(&selected).to_string(),
-                                FontId::monospace(13.0),
-                                Color32::WHITE,
-                            );
-                        }
+                        let selection = Rect::from_min_size(
+                            pos2(
+                                body_left + (left - 1) as f32 * CELL_WIDTH,
+                                body_top + (top - 1) as f32 * CELL_HEIGHT,
+                            ),
+                            vec2(
+                                (right - left + 1) as f32 * CELL_WIDTH,
+                                (bottom - top + 1) as f32 * CELL_HEIGHT,
+                            ),
+                        );
+                        let fill = if top == bottom && left == right {
+                            SELECTED
+                        } else {
+                            RANGE_SELECTED
+                        };
+                        painter.rect_filled(selection, 0.0, fill);
+                        painter.rect_stroke(
+                            selection,
+                            0.0,
+                            Stroke::new(1.0, ACCENT),
+                            StrokeKind::Inside,
+                        );
+
+                        let active = Rect::from_min_size(
+                            pos2(
+                                body_left + (selected.col as usize - 1) as f32 * CELL_WIDTH,
+                                body_top + (selected.row as usize - 1) as f32 * CELL_HEIGHT,
+                            ),
+                            vec2(CELL_WIDTH, CELL_HEIGHT),
+                        );
+                        painter.text(
+                            active.min + vec2(6.0, 4.0),
+                            Align2::LEFT_TOP,
+                            sheet.value(&selected).to_string(),
+                            FontId::monospace(13.0),
+                            Color32::WHITE,
+                        );
 
                         if response.clicked()
                             && let Some(position) = response.interact_pointer_pos()
@@ -478,15 +529,22 @@ impl App {
                                 let row = ((relative.y - HEADER) / CELL_HEIGHT).floor() as usize;
                                 let column = ((relative.x - HEADER) / CELL_WIDTH).floor() as usize;
                                 if row < ROWS && column < COLUMNS {
-                                    clicked = Some(CellRef::new(row as u32 + 1, column as u32 + 1));
+                                    let extend = ui.input(|input| input.modifiers.shift);
+                                    clicked = Some((
+                                        CellRef::new(row as u32 + 1, column as u32 + 1),
+                                        extend,
+                                    ));
                                 }
                             }
                         }
                     });
             });
 
-        if let Some(reference) = clicked {
+        if let Some((reference, extend)) = clicked {
             self.selected = reference;
+            if !extend {
+                self.anchor = reference;
+            }
             self.sync_formula();
         }
     }
