@@ -32,7 +32,8 @@ Early core engine. The repository currently ships:
 - XLSX import of the first worksheet, preserving supported formulas
 - XLSX export with formulas, numbers, booleans, and text
 - A native desktop app with a virtualized grid, formula bar with reference
-  highlighting, keyboard navigation, copy and paste, and undo and redo
+  highlighting, range selection, keyboard navigation, copy and paste, and undo
+  and redo
 - A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
@@ -53,8 +54,9 @@ cargo test
 
 The GUI opens with a small sample sheet. Type a path in the file field and use
 Open or Save to load and store CSV or XLSX workbooks. Arrow keys move the
-selection, Enter applies a value or formula, Delete clears a cell, and
-Ctrl/Cmd+C, V, Z, and Shift+Z copy, paste, undo, and redo.
+selection, Shift+arrows or Shift+click selects a range, Enter applies a value or
+formula, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and Shift+Z copy,
+paste, undo, and redo.
 
 ## Roadmap
 
