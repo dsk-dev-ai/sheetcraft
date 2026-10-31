@@ -13,6 +13,12 @@ pub enum Expr {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reference {
+    Cell(CellRef),
+    Range(CellRef, CellRef),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnaryOp {
     Plus,
     Minus,
@@ -80,6 +86,39 @@ pub fn parse(input: &str) -> Result<Expr, FormulaError> {
         return Err(FormulaError::new("unexpected trailing tokens"));
     }
     Ok(expr)
+}
+
+/// Collect the cells and ranges referenced by a formula.
+///
+/// Returns an empty list when the input is not a formula or does not parse.
+pub fn references(formula: &str) -> Vec<Reference> {
+    let Some(formula) = formula.strip_prefix('=') else {
+        return Vec::new();
+    };
+    let Ok(expr) = parse(formula) else {
+        return Vec::new();
+    };
+    let mut references = Vec::new();
+    collect_references(&expr, &mut references);
+    references
+}
+
+fn collect_references(expr: &Expr, references: &mut Vec<Reference>) {
+    match expr {
+        Expr::Number(_) => {}
+        Expr::Ref(reference) => references.push(Reference::Cell(*reference)),
+        Expr::Range(start, end) => references.push(Reference::Range(*start, *end)),
+        Expr::Unary(_, inner) => collect_references(inner, references),
+        Expr::Binary(_, left, right) => {
+            collect_references(left, references);
+            collect_references(right, references);
+        }
+        Expr::Call(_, args) => {
+            for arg in args {
+                collect_references(arg, references);
+            }
+        }
+    }
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, FormulaError> {
@@ -371,5 +410,22 @@ mod tests {
         assert!(parse("SUM(A1").is_err());
         assert!(parse("A0").is_err());
         assert!(parse("1 $ 2").is_err());
+    }
+
+    #[test]
+    fn collects_references_from_formulas() {
+        assert_eq!(
+            references("=SUM(A1:B2) * C3"),
+            vec![
+                Reference::Range(CellRef::new(1, 1), CellRef::new(2, 2)),
+                Reference::Cell(CellRef::new(3, 3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_text_and_invalid_formulas() {
+        assert!(references("A1").is_empty());
+        assert!(references("=SUM(A1").is_empty());
     }
 }
