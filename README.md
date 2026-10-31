@@ -59,6 +59,8 @@ selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo.
 
+![SheetCraft desktop app](assets/screenshot.png)
+
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md).
