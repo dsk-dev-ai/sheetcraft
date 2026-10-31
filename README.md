@@ -32,14 +32,18 @@ Early core engine. The repository currently ships:
 - Cycle detection for circular references
 - CSV import and export with quoted fields, commas, and embedded newlines
 - XLSX import of the first worksheet, preserving supported formulas
-- XLSX export with formulas, numbers, booleans, and text
+- XLSX export with formulas, numbers, booleans, text, and cell formatting
 - A native desktop app with a virtualized grid, formula bar with reference
   highlighting, range selection, keyboard navigation, copy and paste, and undo
   and redo
+- Number formats, bold text, text colors, and cell fills in the desktop app,
+  exported to XLSX
 - A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
-Formatting, multiple sheets, and charts are next on the roadmap.
+Column widths, multiple sheets, and charts are next on the roadmap. XLSX import
+preserves values and supported formulas; visual formatting is applied in the app
+and included when exporting to XLSX.
 
 ## Download
 
@@ -66,7 +70,9 @@ Open or Save to load and store CSV or XLSX workbooks. Start typing to edit a
 cell, or use double-click or F2 to edit the current value. Arrow keys move the
 selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
-Shift+Z copy, paste, undo, and redo.
+Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
+fill colors, and number formats to the current selection; Ctrl/Cmd+B toggles
+bold.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 
@@ -83,7 +89,7 @@ See [ROADMAP.md](ROADMAP.md).
 ## Design principles
 
 1. **Local-first.** Files stay on disk. No network calls in the default build.
-2. **Instant.** Cold start under 100 ms, even on large workbooks.
+2. **Instant.** Release-build cold start under 300 ms, even on large workbooks.
 3. **Correct.** Formula results are tested against reference spreadsheets.
 4. **Small.** A single self-contained binary, no runtime install.
 5. **Open.** MIT licensed, no open-core bait-and-switch.

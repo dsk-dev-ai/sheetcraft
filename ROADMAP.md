@@ -43,7 +43,10 @@ enough to replace a browser spreadsheet for everyday work.
 
 ## v0.4 Everyday use
 
-- [ ] Number formats, bold, colors, borders
+- [x] Number formats with thousands separators, currency, and percent
+- [x] Bold, text colors, and cell fills
+- [x] XLSX export preserves cell formatting
+- [ ] Cell borders
 - [ ] Column widths and row heights
 - [ ] Multiple sheets
 - [ ] Sorting and filtering

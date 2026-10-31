@@ -1,7 +1,7 @@
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Rect, RichText, Stroke, StrokeKind, pos2, vec2,
 };
-use sheetcraft::{CellRef, CellValue, Sheet, formula, io};
+use sheetcraft::{CellFormat, CellRef, CellValue, NumberFormat, Rgb, Sheet, formula, io};
 
 const ROWS: usize = 1_000;
 const COLUMNS: usize = 26;
@@ -20,6 +20,33 @@ const SELECTED: Color32 = Color32::from_rgb(6, 78, 59);
 const RANGE_SELECTED: Color32 = Color32::from_rgba_premultiplied(4, 49, 37, 170);
 const REFERENCE: Color32 = Color32::from_rgba_premultiplied(8, 31, 23, 38);
 const ERROR: Color32 = Color32::from_rgb(248, 113, 113);
+
+const TEXT_COLORS: [(&str, Rgb); 5] = [
+    ("Red", Rgb::new(248, 113, 113)),
+    ("Amber", Rgb::new(251, 191, 36)),
+    ("Green", Rgb::new(52, 211, 153)),
+    ("Blue", Rgb::new(96, 165, 250)),
+    ("Violet", Rgb::new(192, 132, 252)),
+];
+
+const FILL_COLORS: [(&str, Rgb); 4] = [
+    ("Green", Rgb::new(6, 78, 59)),
+    ("Navy", Rgb::new(30, 58, 138)),
+    ("Wine", Rgb::new(127, 29, 29)),
+    ("Slate", Rgb::new(51, 65, 85)),
+];
+
+const NUMBER_FORMATS: [(NumberFormat, &str); 6] = [
+    (NumberFormat::General, "General"),
+    (NumberFormat::Number { decimals: 0 }, "Number, no decimals"),
+    (NumberFormat::Number { decimals: 2 }, "Number, 2 decimals"),
+    (NumberFormat::Currency { decimals: 2 }, "Currency"),
+    (
+        NumberFormat::Currency { decimals: 0 },
+        "Currency, no decimals",
+    ),
+    (NumberFormat::Percent { decimals: 0 }, "Percent"),
+];
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -220,6 +247,52 @@ impl App {
         self.status_ok = ok;
     }
 
+    fn apply_format(&mut self, message: &str, update: impl Fn(&mut CellFormat)) {
+        let before = self.sheet.clone();
+        let (top, left, bottom, right) = self.selection_bounds();
+        for row in top..=bottom {
+            for column in left..=right {
+                let reference = CellRef::new(row, column);
+                let mut format = self.sheet.format(&reference);
+                update(&mut format);
+                self.sheet.set_format(reference, format);
+            }
+        }
+        self.record(before);
+        self.set_status(format!("{message} {}", self.selection_label()), true);
+    }
+
+    fn toggle_bold(&mut self) {
+        let bold = !self.sheet.format(&self.selected).bold;
+        let message = if bold { "Bold" } else { "Removed bold from" };
+        self.apply_format(message, |format| format.bold = bold);
+    }
+
+    fn set_text_color(&mut self, color: Option<Rgb>) {
+        let message = if color.is_some() {
+            "Applied text color to"
+        } else {
+            "Reset text color on"
+        };
+        self.apply_format(message, |format| format.text_color = color);
+    }
+
+    fn set_fill_color(&mut self, color: Option<Rgb>) {
+        let message = if color.is_some() {
+            "Applied fill to"
+        } else {
+            "Removed fill from"
+        };
+        self.apply_format(message, |format| format.fill_color = color);
+    }
+
+    fn set_number_format(&mut self, number_format: NumberFormat) {
+        let label = number_format_label(number_format);
+        self.apply_format(&format!("Applied {label} to"), |format| {
+            format.number_format = number_format;
+        });
+    }
+
     fn move_selection(&mut self, row_delta: isize, column_delta: isize, extend: bool) {
         let row = (self.selected.row as isize + row_delta).clamp(1, ROWS as isize);
         let column = (self.selected.col as isize + column_delta).clamp(1, COLUMNS as isize);
@@ -305,6 +378,9 @@ impl App {
         if ui.input(|input| input.modifiers.command && input.key_pressed(Key::S)) {
             self.save();
         }
+        if ui.input(|input| input.modifiers.command && input.key_pressed(Key::B)) {
+            self.toggle_bold();
+        }
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -386,6 +462,68 @@ impl App {
                         self.commit();
                     }
                 });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let selected_format = self.sheet.format(&self.selected);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("B").strong())
+                                .selected(selected_format.bold),
+                        )
+                        .on_hover_text("Bold (Ctrl/Cmd+B)")
+                        .clicked()
+                    {
+                        self.toggle_bold();
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Text").color(MUTED));
+                    if ui
+                        .small_button("Auto")
+                        .on_hover_text("Default text color")
+                        .clicked()
+                    {
+                        self.set_text_color(None);
+                    }
+                    for (name, color) in TEXT_COLORS {
+                        if color_swatch(ui, color, selected_format.text_color == Some(color), name)
+                        {
+                            self.set_text_color(Some(color));
+                        }
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Fill").color(MUTED));
+                    if ui
+                        .small_button("None")
+                        .on_hover_text("Remove fill color")
+                        .clicked()
+                    {
+                        self.set_fill_color(None);
+                    }
+                    for (name, color) in FILL_COLORS {
+                        if color_swatch(ui, color, selected_format.fill_color == Some(color), name)
+                        {
+                            self.set_fill_color(Some(color));
+                        }
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Number").color(MUTED));
+                    egui::ComboBox::from_id_salt("number-format")
+                        .selected_text(number_format_label(selected_format.number_format))
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            for (number_format, label) in NUMBER_FORMATS {
+                                if ui
+                                    .selectable_label(
+                                        selected_format.number_format == number_format,
+                                        label,
+                                    )
+                                    .clicked()
+                                {
+                                    self.set_number_format(number_format);
+                                }
+                            }
+                        });
+                });
             });
     }
 
@@ -466,26 +604,28 @@ impl App {
                         for row in first_row..last_row {
                             for column in first_column..last_column {
                                 let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
+                                let format = sheet.format(&reference);
+                                let cell_rect = Rect::from_min_size(
+                                    pos2(
+                                        body_left + column as f32 * CELL_WIDTH,
+                                        body_top + row as f32 * CELL_HEIGHT,
+                                    ),
+                                    vec2(CELL_WIDTH, CELL_HEIGHT),
+                                );
+                                if let Some(fill) = format.fill_color {
+                                    painter.rect_filled(cell_rect, 0.0, color32(fill));
+                                }
                                 let value = sheet.value(&reference);
-                                let (text, color) = match value {
-                                    CellValue::Empty => (String::new(), TEXT),
-                                    CellValue::Error(_) => (value.to_string(), ERROR),
-                                    other => (other.to_string(), TEXT),
-                                };
+                                let text = display_value(&value, format.number_format);
                                 if text.is_empty() {
                                     continue;
                                 }
-                                let position = pos2(
-                                    body_left + column as f32 * CELL_WIDTH + 6.0,
-                                    body_top + row as f32 * CELL_HEIGHT + 4.0,
-                                );
-                                painter.text(
-                                    position,
-                                    Align2::LEFT_TOP,
-                                    text,
-                                    FontId::monospace(13.0),
-                                    color,
-                                );
+                                let color = format
+                                    .text_color
+                                    .map(color32)
+                                    .unwrap_or_else(|| if value.is_error() { ERROR } else { TEXT });
+                                let position = cell_rect.min + vec2(6.0, 4.0);
+                                draw_text(&painter, position, &text, color, format.bold);
                             }
                         }
 
@@ -556,13 +696,18 @@ impl App {
                             ),
                             vec2(CELL_WIDTH, CELL_HEIGHT),
                         );
-                        painter.text(
-                            active.min + vec2(6.0, 4.0),
-                            Align2::LEFT_TOP,
-                            sheet.value(&selected).to_string(),
-                            FontId::monospace(13.0),
-                            Color32::WHITE,
-                        );
+                        let active_format = sheet.format(&selected);
+                        let active_value = sheet.value(&selected);
+                        let active_text = display_value(&active_value, active_format.number_format);
+                        if !active_text.is_empty() {
+                            draw_text(
+                                &painter,
+                                active.min + vec2(6.0, 4.0),
+                                &active_text,
+                                Color32::WHITE,
+                                active_format.bold,
+                            );
+                        }
 
                         if response.clicked()
                             && let Some(position) = response.interact_pointer_pos()
@@ -607,7 +752,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(
-                                "Type or F2 edits  |  Enter applies  |  Shift+Arrows selects  |  Ctrl/Cmd+C/V/Z  |  Ctrl/Cmd+S saves",
+                                "Type or F2 edits  |  Shift+Arrows selects  |  Ctrl/Cmd+B bold  |  Ctrl/Cmd+C/V/Z  |  Ctrl/Cmd+S saves",
                             )
                             .size(12.0)
                             .color(MUTED),
@@ -652,5 +797,93 @@ fn demo_sheet() -> Sheet {
     for (reference, raw) in cells {
         sheet.set_a1(reference, raw).unwrap();
     }
+    let header = CellFormat {
+        bold: true,
+        text_color: Some(Rgb::new(226, 232, 240)),
+        fill_color: Some(Rgb::new(30, 58, 138)),
+        ..CellFormat::default()
+    };
+    for column in 1..=4 {
+        sheet.set_format(CellRef::new(1, column), header);
+    }
+    let money = CellFormat {
+        number_format: NumberFormat::Currency { decimals: 2 },
+        ..CellFormat::default()
+    };
+    for row in 2..=5 {
+        sheet.set_format(CellRef::new(row, 2), money);
+        sheet.set_format(CellRef::new(row, 4), money);
+    }
+    sheet.set_format(
+        CellRef::new(5, 1),
+        CellFormat {
+            bold: true,
+            ..CellFormat::default()
+        },
+    );
+    sheet.set_format(
+        CellRef::new(5, 4),
+        CellFormat {
+            bold: true,
+            number_format: NumberFormat::Currency { decimals: 2 },
+            ..CellFormat::default()
+        },
+    );
     sheet
+}
+
+fn number_format_label(number_format: NumberFormat) -> &'static str {
+    NUMBER_FORMATS
+        .iter()
+        .find(|(format, _)| *format == number_format)
+        .map(|(_, label)| *label)
+        .unwrap_or("Custom")
+}
+
+fn display_value(value: &CellValue, number_format: NumberFormat) -> String {
+    match value {
+        CellValue::Number(number) if !matches!(number_format, NumberFormat::General) => {
+            number_format.apply(*number)
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn color32(color: Rgb) -> Color32 {
+    Color32::from_rgb(color.r, color.g, color.b)
+}
+
+fn color_swatch(ui: &mut egui::Ui, color: Rgb, selected: bool, tooltip: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
+    ui.painter().rect_filled(rect, 3.0, color32(color));
+    if selected {
+        ui.painter()
+            .rect_stroke(rect, 3.0, Stroke::new(2.0, ACCENT), StrokeKind::Inside);
+    }
+    response.on_hover_text(tooltip).clicked()
+}
+
+fn draw_text(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    text: &str,
+    color: Color32,
+    bold: bool,
+) {
+    painter.text(
+        position,
+        Align2::LEFT_TOP,
+        text,
+        FontId::monospace(13.0),
+        color,
+    );
+    if bold {
+        painter.text(
+            position + vec2(0.6, 0.0),
+            Align2::LEFT_TOP,
+            text,
+            FontId::monospace(13.0),
+            color,
+        );
+    }
 }

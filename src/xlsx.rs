@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use calamine::{Data, Range, Reader, open_workbook_auto};
-use rust_xlsxwriter::{Workbook, Worksheet};
+use rust_xlsxwriter::{Color as XlsxColor, Format, Workbook, Worksheet};
 
 use crate::cell::CellRef;
 use crate::engine::Sheet;
+use crate::format::CellFormat;
 use crate::formula;
 
 impl Sheet {
@@ -38,6 +41,7 @@ impl Sheet {
     pub fn to_xlsx(&self, path: &str) -> Result<(), String> {
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
+        let mut formats: HashMap<CellFormat, Format> = HashMap::new();
         if let Some((rows, columns)) = self.bounds() {
             if rows > 1_048_576 || columns > 16_384 {
                 return Err("sheet is larger than the XLSX limit".to_string());
@@ -48,7 +52,17 @@ impl Sheet {
                     let Some(raw) = self.raw(&reference) else {
                         continue;
                     };
-                    write_cell(worksheet, row - 1, (column - 1) as u16, raw)?;
+                    let cell_format = self.format(&reference);
+                    let format = if cell_format.is_default() {
+                        None
+                    } else {
+                        Some(
+                            &*formats
+                                .entry(cell_format)
+                                .or_insert_with(|| to_xlsx_format(cell_format)),
+                        )
+                    };
+                    write_cell(worksheet, row - 1, (column - 1) as u16, raw, format)?;
                 }
             }
         }
@@ -95,41 +109,72 @@ fn data_to_raw(data: &Data) -> Option<String> {
     }
 }
 
-fn write_cell(worksheet: &mut Worksheet, row: u32, column: u16, raw: &str) -> Result<(), String> {
+fn write_cell(
+    worksheet: &mut Worksheet,
+    row: u32,
+    column: u16,
+    raw: &str,
+    format: Option<&Format>,
+) -> Result<(), String> {
     if let Some(formula) = raw.strip_prefix('=')
         && formula::parse(formula).is_ok()
     {
-        worksheet
-            .write_formula(row, column, formula)
-            .map_err(|error| error.to_string())?;
+        let result = match format {
+            Some(format) => worksheet.write_formula_with_format(row, column, formula, format),
+            None => worksheet.write_formula(row, column, formula),
+        };
+        result.map_err(|error| error.to_string())?;
         return Ok(());
     }
 
     let trimmed = raw.trim();
-    if trimmed.eq_ignore_ascii_case("TRUE") {
-        worksheet
-            .write_boolean(row, column, true)
-            .map_err(|error| error.to_string())?;
+    let result = if trimmed.eq_ignore_ascii_case("TRUE") {
+        match format {
+            Some(format) => worksheet.write_boolean_with_format(row, column, true, format),
+            None => worksheet.write_boolean(row, column, true),
+        }
     } else if trimmed.eq_ignore_ascii_case("FALSE") {
-        worksheet
-            .write_boolean(row, column, false)
-            .map_err(|error| error.to_string())?;
+        match format {
+            Some(format) => worksheet.write_boolean_with_format(row, column, false, format),
+            None => worksheet.write_boolean(row, column, false),
+        }
     } else if let Ok(number) = trimmed.parse::<f64>() {
-        worksheet
-            .write_number(row, column, number)
-            .map_err(|error| error.to_string())?;
+        match format {
+            Some(format) => worksheet.write_number_with_format(row, column, number, format),
+            None => worksheet.write_number(row, column, number),
+        }
     } else {
-        worksheet
-            .write_string(row, column, raw)
-            .map_err(|error| error.to_string())?;
-    }
+        match format {
+            Some(format) => worksheet.write_string_with_format(row, column, raw, format),
+            None => worksheet.write_string(row, column, raw),
+        }
+    };
+    result.map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn to_xlsx_format(cell_format: CellFormat) -> Format {
+    let mut format = Format::new();
+    if cell_format.bold {
+        format = format.set_bold();
+    }
+    if let Some(color) = cell_format.text_color {
+        format = format.set_font_color(XlsxColor::RGB(color.to_hex()));
+    }
+    if let Some(color) = cell_format.fill_color {
+        format = format.set_background_color(XlsxColor::RGB(color.to_hex()));
+    }
+    if let Some(number_format) = cell_format.number_format.excel_format() {
+        format = format.set_num_format(number_format);
+    }
+    format
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cell::CellValue;
+    use crate::format::{CellFormat, NumberFormat, Rgb};
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("sheetcraft-{}-{name}.xlsx", std::process::id()))
@@ -163,6 +208,45 @@ mod tests {
             Some("=SUM(A1:A3)".to_string())
         );
         assert_eq!(importable_formula("VLOOKUP(A1,B:C,2)"), None);
+    }
+
+    #[test]
+    fn exports_formatted_cells() {
+        let path = temp_path("formatted");
+        let path_text = path.to_string_lossy().to_string();
+        let mut sheet = Sheet::new();
+        sheet.set_a1("A1", "1234.5").unwrap();
+        sheet.set_format(
+            CellRef::new(1, 1),
+            CellFormat {
+                bold: true,
+                text_color: Some(Rgb::new(248, 113, 113)),
+                fill_color: Some(Rgb::new(6, 78, 59)),
+                number_format: NumberFormat::Currency { decimals: 2 },
+            },
+        );
+        sheet.set_a1("A2", "=A1*2").unwrap();
+        sheet.set_format(
+            CellRef::new(2, 1),
+            CellFormat {
+                bold: true,
+                number_format: NumberFormat::Currency { decimals: 2 },
+                ..CellFormat::default()
+            },
+        );
+
+        sheet.to_xlsx(&path_text).unwrap();
+        let imported = Sheet::from_xlsx(&path_text).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            imported.value(&CellRef::new(1, 1)),
+            CellValue::Number(1234.5)
+        );
+        assert_eq!(
+            imported.value(&CellRef::new(2, 1)),
+            CellValue::Number(2469.0)
+        );
     }
 
     #[test]
