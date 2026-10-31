@@ -1,0 +1,15 @@
+[package]
+name = "sheetcraft"
+version = "0.1.0"
+edition = "2024"
+description = "An open-source spreadsheet editor written from scratch in pure Rust"
+license = "MIT"
+repository = "https://github.com/dsk-dev-ai/sheetcraft"
+keywords = ["spreadsheet", "excel", "rust", "offline", "privacy"]
+categories = ["gui", "parser-implementations"]
+
+[dependencies]
+
+[[bin]]
+name = "sheetcraft"
+path = "src/main.rs"
