@@ -1,5 +1,6 @@
 use std::io::Read;
 
+use sheetcraft::io;
 use sheetcraft::{CellRef, CellValue, Sheet};
 
 fn main() {
@@ -44,7 +45,7 @@ fn main() {
                 usage();
                 std::process::exit(1);
             }
-            match load_sheet(&args[1]).and_then(|sheet| save_sheet(&sheet, &args[2])) {
+            match io::load(&args[1]).and_then(|sheet| io::save(&sheet, &args[2])) {
                 Ok(()) => println!("wrote {}", args[2]),
                 Err(error) => {
                     eprintln!("error: {error}");
@@ -65,34 +66,6 @@ fn usage() {
     println!("  sheetcraft csv <file.csv>      preview a CSV file, use - for stdin");
     println!("  sheetcraft xlsx <file.xlsx>    preview the first worksheet of an XLSX file");
     println!("  sheetcraft convert <in> <out>  convert between .csv and .xlsx");
-}
-
-fn extension(path: &str) -> Option<String> {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-}
-
-fn load_sheet(path: &str) -> Result<Sheet, String> {
-    match extension(path).as_deref() {
-        Some("csv") => {
-            let input = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-            Ok(Sheet::from_csv(&input))
-        }
-        Some("xlsx") => Sheet::from_xlsx(path),
-        Some(other) => Err(format!("unsupported input format: {other}")),
-        None => Err("input path has no extension".to_string()),
-    }
-}
-
-fn save_sheet(sheet: &Sheet, path: &str) -> Result<(), String> {
-    match extension(path).as_deref() {
-        Some("csv") => std::fs::write(path, sheet.to_csv()).map_err(|error| error.to_string()),
-        Some("xlsx") => sheet.to_xlsx(path),
-        Some(other) => Err(format!("unsupported output format: {other}")),
-        None => Err("output path has no extension".to_string()),
-    }
 }
 
 fn read_input(path: &str) -> std::io::Result<String> {
