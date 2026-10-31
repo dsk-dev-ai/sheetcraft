@@ -4,6 +4,8 @@
 
 # SheetCraft
 
+[![Latest release](https://img.shields.io/github/v/release/dsk-dev-ai/sheetcraft)](https://github.com/dsk-dev-ai/sheetcraft/releases/latest)
+
 An open-source spreadsheet editor written from scratch in pure Rust.
 
 **Fast. Offline. Private. One binary. No account, no subscription, no telemetry.**
@@ -74,7 +76,7 @@ See [ROADMAP.md](ROADMAP.md).
 
 - v0.1 Core engine and CLI (done)
 - v0.2 CSV and XLSX import/export (done)
-- v0.3 Native GUI with a virtualized grid (in progress)
+- v0.3 Native GUI with a virtualized grid (done)
 - v0.4 Formatting, charts, and multi-sheet workbooks
 - v1.0 Stable release and launch
 
