@@ -1,7 +1,7 @@
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Rect, RichText, Stroke, StrokeKind, pos2, vec2,
 };
-use sheetcraft::{CellRef, CellValue, Sheet, io};
+use sheetcraft::{CellRef, CellValue, Sheet, formula, io};
 
 const ROWS: usize = 1_000;
 const COLUMNS: usize = 26;
@@ -17,6 +17,7 @@ const TEXT: Color32 = Color32::from_rgb(226, 232, 240);
 const MUTED: Color32 = Color32::from_rgb(148, 163, 184);
 const ACCENT: Color32 = Color32::from_rgb(52, 211, 153);
 const SELECTED: Color32 = Color32::from_rgb(6, 78, 59);
+const REFERENCE: Color32 = Color32::from_rgba_premultiplied(8, 31, 23, 38);
 const ERROR: Color32 = Color32::from_rgb(248, 113, 113);
 
 fn main() -> eframe::Result {
@@ -309,6 +310,7 @@ impl App {
     fn grid(&mut self, ui: &mut egui::Ui) {
         let sheet = &self.sheet;
         let selected = self.selected;
+        let references = formula::references(&self.formula);
         let mut clicked = None;
 
         egui::CentralPanel::default()
@@ -416,6 +418,28 @@ impl App {
                                 [pos2(rect.left() + HEADER, y), pos2(rect.right(), y)],
                                 Stroke::new(1.0, GRID_LINE),
                             );
+                        }
+
+                        for reference in &references {
+                            let (start, end) = match *reference {
+                                formula::Reference::Cell(reference) => (reference, reference),
+                                formula::Reference::Range(start, end) => (start, end),
+                            };
+                            let top = start.row.min(end.row);
+                            let bottom = start.row.max(end.row);
+                            let left = start.col.min(end.col);
+                            let right = start.col.max(end.col);
+                            let cell = Rect::from_min_size(
+                                pos2(
+                                    body_left + (left - 1) as f32 * CELL_WIDTH,
+                                    body_top + (top - 1) as f32 * CELL_HEIGHT,
+                                ),
+                                vec2(
+                                    (right - left + 1) as f32 * CELL_WIDTH,
+                                    (bottom - top + 1) as f32 * CELL_HEIGHT,
+                                ),
+                            );
+                            painter.rect_filled(cell, 0.0, REFERENCE);
                         }
 
                         if selected.row as usize > first_row

@@ -31,8 +31,8 @@ Early core engine. The repository currently ships:
 - CSV import and export with quoted fields, commas, and embedded newlines
 - XLSX import of the first worksheet, preserving supported formulas
 - XLSX export with formulas, numbers, booleans, and text
-- A native desktop app with a virtualized grid, formula bar, keyboard navigation,
-  copy and paste, and undo and redo
+- A native desktop app with a virtualized grid, formula bar with reference
+  highlighting, keyboard navigation, copy and paste, and undo and redo
 - A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 

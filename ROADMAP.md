@@ -31,7 +31,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Formula bar
 - [x] Open and save CSV or XLSX from the desktop app
 - [x] Copy and paste
-- [ ] Reference highlighting
+- [x] Reference highlighting
 - [x] Undo and redo
 - [ ] Instant startup benchmark under 100 ms
 
