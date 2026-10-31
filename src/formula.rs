@@ -279,6 +279,19 @@ impl Parser {
     }
 }
 
+pub const SUPPORTED_FUNCTIONS: &[&str] = &["SUM", "AVERAGE", "MIN", "MAX"];
+
+pub fn is_supported(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number(_) | Expr::Ref(_) | Expr::Range(_, _) => true,
+        Expr::Unary(_, inner) => is_supported(inner),
+        Expr::Binary(_, left, right) => is_supported(left) && is_supported(right),
+        Expr::Call(name, args) => {
+            SUPPORTED_FUNCTIONS.contains(&name.as_str()) && args.iter().all(is_supported)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -29,11 +29,12 @@ Early core engine. The repository currently ships:
   `SUM` / `AVERAGE` / `MIN` / `MAX`
 - Cycle detection for circular references
 - CSV import and export with quoted fields, commas, and embedded newlines
-- XLSX import of the first worksheet (values)
-- A small CLI for evaluating formulas and previewing CSV or XLSX files
-- Unit tests for parsing, evaluation, and CSV round trips
+- XLSX import of the first worksheet, preserving supported formulas
+- XLSX export with formulas, numbers, booleans, and text
+- A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
+- Unit tests for parsing, evaluation, and file round trips
 
-XLSX export, XLSX formulas, the GUI, and formatting are next on the roadmap.
+The GUI and formatting are next on the roadmap.
 
 ## Quick start
 
@@ -42,6 +43,7 @@ cargo run -- demo
 cargo run -- eval '=SUM(A1:A3) * 2'
 cargo run -- csv examples/budget.csv
 cargo run -- xlsx path/to/workbook.xlsx
+cargo run -- convert examples/budget.csv /tmp/budget.xlsx
 cargo test
 ```
 
@@ -50,7 +52,7 @@ cargo test
 See [ROADMAP.md](ROADMAP.md).
 
 - v0.1 Core engine and CLI (done)
-- v0.2 CSV import/export, XLSX next (in progress)
+- v0.2 CSV and XLSX import/export (done)
 - v0.3 Native GUI with a virtualized grid
 - v0.4 Formatting, charts, and multi-sheet workbooks
 - v1.0 Stable release and launch

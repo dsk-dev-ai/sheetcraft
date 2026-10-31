@@ -18,9 +18,9 @@ enough to replace a browser spreadsheet for everyday work.
 
 - [x] CSV import and export
 - [x] XLSX import with `calamine`
-- [ ] Import formulas from XLSX
-- [ ] XLSX export with `rust_xlsxwriter`
-- [ ] Round-trip tests against real workbooks
+- [x] Import supported formulas from XLSX
+- [x] XLSX export with `rust_xlsxwriter`
+- [x] Round-trip tests against generated workbooks
 - [ ] Large-file benchmark: 100k rows, 20 columns
 
 ## v0.3 Native GUI
