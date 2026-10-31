@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="SheetCraft: the spreadsheet editor rebuilt in pure Rust" width="100%">
+</p>
+
 # SheetCraft
 
 An open-source spreadsheet editor written from scratch in pure Rust.
@@ -24,16 +28,18 @@ Early core engine. The repository currently ships:
 - A formula parser and evaluator with arithmetic, cell refs, ranges, and
   `SUM` / `AVERAGE` / `MIN` / `MAX`
 - Cycle detection for circular references
-- A small CLI for evaluating formulas and running a demo sheet
-- Unit tests for parsing and evaluation
+- CSV import and export with quoted fields, commas, and embedded newlines
+- A small CLI for evaluating formulas, previewing CSV files, and running a demo
+- Unit tests for parsing, evaluation, and CSV round trips
 
-The GUI, file import/export, and formatting are on the roadmap.
+XLSX support, the GUI, and formatting are next on the roadmap.
 
 ## Quick start
 
 ```bash
 cargo run -- demo
 cargo run -- eval '=SUM(A1:A3) * 2'
+cargo run -- csv examples/budget.csv
 cargo test
 ```
 
@@ -41,8 +47,8 @@ cargo test
 
 See [ROADMAP.md](ROADMAP.md).
 
-- v0.1 Core engine and CLI (current)
-- v0.2 XLSX / CSV import and export
+- v0.1 Core engine and CLI (done)
+- v0.2 CSV import/export, XLSX next (in progress)
 - v0.3 Native GUI with a virtualized grid
 - v0.4 Formatting, charts, and multi-sheet workbooks
 - v1.0 Stable release and launch

@@ -16,7 +16,7 @@ enough to replace a browser spreadsheet for everyday work.
 
 ## v0.2 Files
 
-- [ ] CSV import and export
+- [x] CSV import and export
 - [ ] XLSX import with `calamine`
 - [ ] XLSX export with `rust_xlsxwriter`
 - [ ] Round-trip tests against real workbooks

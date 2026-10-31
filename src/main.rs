@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use sheetcraft::{CellRef, CellValue, Sheet};
 
 fn main() {
@@ -11,6 +13,19 @@ fn main() {
             }
             eval_formula(&args[1..].join(" "));
         }
+        Some("csv") => {
+            if args.len() < 2 {
+                usage();
+                std::process::exit(1);
+            }
+            match read_input(&args[1]) {
+                Ok(input) => preview_csv(&input),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
         _ => usage(),
     }
 }
@@ -21,6 +36,17 @@ fn usage() {
     println!("Usage:");
     println!("  sheetcraft demo");
     println!("  sheetcraft eval \"=SUM(A1:A3) * 2\"");
+    println!("  sheetcraft csv <file.csv>    preview a CSV file, use - for stdin");
+}
+
+fn read_input(path: &str) -> std::io::Result<String> {
+    if path == "-" {
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input)?;
+        Ok(input)
+    } else {
+        std::fs::read_to_string(path)
+    }
 }
 
 fn eval_formula(input: &str) {
@@ -29,6 +55,38 @@ fn eval_formula(input: &str) {
     let formula = input.strip_prefix('=').unwrap_or(input);
     sheet.set(target, format!("={formula}"));
     println!("{}", sheet.value(&target));
+}
+
+fn preview_csv(input: &str) {
+    let sheet = Sheet::from_csv(input);
+    let (rows, columns) = sheet.bounds().unwrap_or((0, 0));
+    println!("{rows} rows x {columns} columns");
+    if rows == 0 {
+        return;
+    }
+
+    let shown_rows = rows.min(10);
+    let shown_columns = columns.min(8);
+    print!("{:<4}", "");
+    for column in 1..=shown_columns {
+        print!("{:<14}", CellRef::column_name(column));
+    }
+    println!();
+    for row in 1..=shown_rows {
+        print!("{row:<4}");
+        for column in 1..=shown_columns {
+            let value = sheet.value(&CellRef::new(row, column));
+            let text = match value {
+                CellValue::Empty => String::new(),
+                other => other.to_string(),
+            };
+            print!("{text:<14}");
+        }
+        println!();
+    }
+    if rows > shown_rows || columns > shown_columns {
+        println!("...");
+    }
 }
 
 fn demo() {
