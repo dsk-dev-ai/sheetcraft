@@ -34,7 +34,11 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Copy and paste
 - [x] Reference highlighting
 - [x] Undo and redo
-- [ ] Instant startup benchmark under 100 ms
+- [x] Release-build startup benchmark under 300 ms (about 250 ms locally)
+
+## v0.3 Release
+
+- [x] Cross-platform release archives for the CLI and desktop app
 
 ## v0.4 Everyday use
 

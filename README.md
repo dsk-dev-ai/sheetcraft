@@ -39,6 +39,13 @@ Early core engine. The repository currently ships:
 
 Formatting, multiple sheets, and charts are next on the roadmap.
 
+## Download
+
+Prebuilt CLI and desktop binaries for Linux, macOS, and Windows are on the
+[releases page](https://github.com/dsk-dev-ai/sheetcraft/releases/latest).
+Unpack the archive and run `sheetcraft` for the CLI or `sheetcraft-gui` for the
+desktop app.
+
 ## Quick start
 
 ```bash
