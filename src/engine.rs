@@ -17,6 +17,10 @@ impl Sheet {
         self.cells.insert(reference, raw.into());
     }
 
+    pub fn clear(&mut self, reference: &CellRef) {
+        self.cells.remove(reference);
+    }
+
     pub fn set_a1(
         &mut self,
         reference: &str,

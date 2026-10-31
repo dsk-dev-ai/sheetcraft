@@ -25,10 +25,13 @@ enough to replace a browser spreadsheet for everyday work.
 
 ## v0.3 Native GUI
 
-- [ ] `eframe`/`egui` shell
-- [ ] Virtualized grid renderer
-- [ ] Cell editing, keyboard navigation, copy and paste
-- [ ] Formula bar and reference highlighting
+- [x] `eframe`/`egui` shell
+- [x] Virtualized grid renderer
+- [x] Cell editing and keyboard navigation
+- [x] Formula bar
+- [x] Open and save CSV or XLSX from the desktop app
+- [ ] Copy and paste
+- [ ] Reference highlighting
 - [ ] Undo and redo
 - [ ] Instant startup benchmark under 100 ms
 
