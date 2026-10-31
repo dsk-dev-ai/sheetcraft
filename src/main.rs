@@ -19,7 +19,20 @@ fn main() {
                 std::process::exit(1);
             }
             match read_input(&args[1]) {
-                Ok(input) => preview_csv(&input),
+                Ok(input) => preview_sheet(&Sheet::from_csv(&input)),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some("xlsx") => {
+            if args.len() < 2 {
+                usage();
+                std::process::exit(1);
+            }
+            match Sheet::from_xlsx(&args[1]) {
+                Ok(sheet) => preview_sheet(&sheet),
                 Err(error) => {
                     eprintln!("error: {error}");
                     std::process::exit(1);
@@ -36,7 +49,8 @@ fn usage() {
     println!("Usage:");
     println!("  sheetcraft demo");
     println!("  sheetcraft eval \"=SUM(A1:A3) * 2\"");
-    println!("  sheetcraft csv <file.csv>    preview a CSV file, use - for stdin");
+    println!("  sheetcraft csv <file.csv>      preview a CSV file, use - for stdin");
+    println!("  sheetcraft xlsx <file.xlsx>    preview the first worksheet of an XLSX file");
 }
 
 fn read_input(path: &str) -> std::io::Result<String> {
@@ -57,8 +71,7 @@ fn eval_formula(input: &str) {
     println!("{}", sheet.value(&target));
 }
 
-fn preview_csv(input: &str) {
-    let sheet = Sheet::from_csv(input);
+fn preview_sheet(sheet: &Sheet) {
     let (rows, columns) = sheet.bounds().unwrap_or((0, 0));
     println!("{rows} rows x {columns} columns");
     if rows == 0 {

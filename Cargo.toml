@@ -9,6 +9,7 @@ keywords = ["spreadsheet", "excel", "rust", "offline", "privacy"]
 categories = ["gui", "parser-implementations"]
 
 [dependencies]
+calamine = "0.37.0"
 
 [[bin]]
 name = "sheetcraft"
