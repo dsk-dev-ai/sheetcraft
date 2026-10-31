@@ -1,6 +1,6 @@
 [package]
 name = "sheetcraft"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 description = "An open-source spreadsheet editor written from scratch in pure Rust"
 license = "MIT"
@@ -24,3 +24,6 @@ required-features = ["gui"]
 
 [features]
 gui = ["dep:eframe"]
+
+[profile.release]
+strip = "symbols"
