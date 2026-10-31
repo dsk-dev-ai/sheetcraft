@@ -61,22 +61,6 @@ See [ROADMAP.md](ROADMAP.md).
 4. **Small.** A single self-contained binary, no runtime install.
 5. **Open.** MIT licensed, no open-core bait-and-switch.
 
-## Viral launch plan
-
-Positioning: *"Excel, rebuilt from scratch in pure Rust. Offline, instant, and
-free forever."*
-
-1. Ship a genuinely useful v0.3 before the first public post.
-2. Record a 20-second GIF: open a 50 MB workbook instantly, edit, save, no
-   account prompt.
-3. Publish benchmark numbers against LibreOffice and a browser spreadsheet on
-   cold start, memory, and large-file load.
-4. Launch on Hacker News, r/rust, r/selfhosted, and r/opensource with the demo
-   and source in the first line.
-5. Keep a public changelog and post a short demo for every release.
-
-Stars follow utility. The first goal is not virality, it is a tool people keep
-open on their desktop.
 
 ## License
 
