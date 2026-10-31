@@ -39,6 +39,7 @@ enough to replace a browser spreadsheet for everyday work.
 ## v0.3 Release
 
 - [x] Cross-platform release archives for the CLI and desktop app
+- [x] Tag and publish v0.3.0
 
 ## v0.4 Everyday use
 
