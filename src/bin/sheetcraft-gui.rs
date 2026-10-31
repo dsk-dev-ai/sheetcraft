@@ -46,6 +46,7 @@ struct App {
     status_ok: bool,
     undo: Vec<Sheet>,
     redo: Vec<Sheet>,
+    focus_formula: bool,
 }
 
 impl App {
@@ -71,6 +72,7 @@ impl App {
             status_ok: true,
             undo: Vec::new(),
             redo: Vec::new(),
+            focus_formula: false,
         }
     }
 
@@ -233,6 +235,28 @@ impl App {
             return;
         }
         let extend = ui.input(|input| input.modifiers.shift);
+        let typed = ui.input(|input| {
+            if input.modifiers.command || input.modifiers.ctrl || input.modifiers.alt {
+                return String::new();
+            }
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect()
+        });
+        if !typed.is_empty() {
+            self.formula = typed;
+            self.focus_formula = true;
+            self.set_status(format!("Editing {}", self.selected), true);
+        }
+        if ui.input(|input| input.key_pressed(Key::F2)) {
+            self.focus_formula = true;
+            self.set_status(format!("Editing {}", self.selected), true);
+        }
         if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
             self.move_selection(-1, 0, extend);
         }
@@ -337,8 +361,26 @@ impl App {
                             .font(egui::TextStyle::Monospace)
                             .hint_text("Enter a value or formula, then press Enter"),
                     );
+                    if self.focus_formula {
+                        response.request_focus();
+                        let cursor = egui::text::CCursor::new(self.formula.chars().count());
+                        if let Some(mut state) =
+                            egui::text_edit::TextEditState::load(ui.ctx(), response.id)
+                        {
+                            state
+                                .cursor
+                                .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+                            state.store(ui.ctx(), response.id);
+                        }
+                        self.focus_formula = false;
+                    }
+                    if response.has_focus() && ui.input(|input| input.key_pressed(Key::Escape)) {
+                        self.sync_formula();
+                        response.surrender_focus();
+                    }
                     if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                         self.commit();
+                        self.move_selection(1, 0, false);
                     }
                     if ui.button("Apply").clicked() {
                         self.commit();
@@ -353,6 +395,7 @@ impl App {
         let (top, left, bottom, right) = self.selection_bounds();
         let references = formula::references(&self.formula);
         let mut clicked = None;
+        let mut edit_requested = false;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BACKGROUND))
@@ -534,6 +577,7 @@ impl App {
                                         CellRef::new(row as u32 + 1, column as u32 + 1),
                                         extend,
                                     ));
+                                    edit_requested = response.double_clicked();
                                 }
                             }
                         }
@@ -546,6 +590,10 @@ impl App {
                 self.anchor = reference;
             }
             self.sync_formula();
+            if edit_requested {
+                self.focus_formula = true;
+                self.set_status(format!("Editing {}", self.selected), true);
+            }
         }
     }
 
@@ -559,7 +607,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(
-                                "Arrows move  |  Enter applies  |  Delete clears  |  Ctrl/Cmd+C/V copy-paste  |  Ctrl/Cmd+Z undo  |  Ctrl/Cmd+S saves",
+                                "Type or F2 edits  |  Enter applies  |  Shift+Arrows selects  |  Ctrl/Cmd+C/V/Z  |  Ctrl/Cmd+S saves",
                             )
                             .size(12.0)
                             .color(MUTED),

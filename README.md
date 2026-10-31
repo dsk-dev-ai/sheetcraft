@@ -53,10 +53,11 @@ cargo test
 ```
 
 The GUI opens with a small sample sheet. Type a path in the file field and use
-Open or Save to load and store CSV or XLSX workbooks. Arrow keys move the
-selection, Shift+arrows or Shift+click selects a range, Enter applies a value or
-formula, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and Shift+Z copy,
-paste, undo, and redo.
+Open or Save to load and store CSV or XLSX workbooks. Start typing to edit a
+cell, or use double-click or F2 to edit the current value. Arrow keys move the
+selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
+down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
+Shift+Z copy, paste, undo, and redo.
 
 ## Roadmap
 
