@@ -36,6 +36,60 @@ impl Sheet {
         self.eval_ref(reference, &mut visiting)
     }
 
+    pub fn from_csv(input: &str) -> Self {
+        let mut sheet = Self::new();
+        for (row, fields) in crate::csv::parse(input).iter().enumerate() {
+            for (column, field) in fields.iter().enumerate() {
+                if !field.is_empty() {
+                    let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
+                    sheet.set(reference, field.clone());
+                }
+            }
+        }
+        sheet
+    }
+
+    pub fn to_csv(&self) -> String {
+        self.to_csv_with(|reference| self.raw(reference).unwrap_or_default().to_string())
+    }
+
+    pub fn to_csv_values(&self) -> String {
+        self.to_csv_with(|reference| self.value(reference).to_string())
+    }
+
+    fn to_csv_with<F>(&self, mut cell_text: F) -> String
+    where
+        F: FnMut(&CellRef) -> String,
+    {
+        let Some((rows, columns)) = self.bounds() else {
+            return String::new();
+        };
+        let mut output = Vec::with_capacity(rows as usize);
+        for row in 1..=rows {
+            let mut fields = Vec::with_capacity(columns as usize);
+            for column in 1..=columns {
+                let reference = CellRef::new(row, column);
+                fields.push(cell_text(&reference));
+            }
+            output.push(fields);
+        }
+        crate::csv::write(&output)
+    }
+
+    pub fn bounds(&self) -> Option<(u32, u32)> {
+        let mut rows = 0;
+        let mut columns = 0;
+        for reference in self.cells.keys() {
+            rows = rows.max(reference.row);
+            columns = columns.max(reference.col);
+        }
+        if rows == 0 || columns == 0 {
+            None
+        } else {
+            Some((rows, columns))
+        }
+    }
+
     fn eval_ref(&self, reference: &CellRef, visiting: &mut HashSet<CellRef>) -> CellValue {
         if visiting.contains(reference) {
             return CellValue::Error(CellError::Cycle);
@@ -287,5 +341,39 @@ mod tests {
             sheet.value(&reference("A3")),
             CellValue::Text("text".to_string())
         );
+    }
+
+    #[test]
+    fn imports_and_evaluates_csv() {
+        let input = "name,value\nwidget,4\nformula,=4*2\n";
+        let sheet = Sheet::from_csv(input);
+        assert_eq!(sheet.value(&reference("B3")), CellValue::Number(8.0));
+        assert_eq!(
+            sheet.value(&reference("A2")),
+            CellValue::Text("widget".to_string())
+        );
+    }
+
+    #[test]
+    fn exports_raw_and_computed_csv() {
+        let input = "name,value\nwidget,4\nformula,=4*2";
+        let sheet = Sheet::from_csv(input);
+        assert_eq!(sheet.to_csv(), input);
+        assert_eq!(sheet.to_csv_values(), "name,value\nwidget,4\nformula,8");
+    }
+
+    #[test]
+    fn reports_bounds() {
+        let mut sheet = Sheet::new();
+        assert_eq!(sheet.bounds(), None);
+        sheet.set_a1("C7", "x").unwrap();
+        assert_eq!(sheet.bounds(), Some((7, 3)));
+    }
+
+    #[test]
+    fn csv_round_trip_escapes_fields() {
+        let input = "\"a,b\",\"say \"\"hi\"\"\"\n\"multi\nline\",plain";
+        let sheet = Sheet::from_csv(input);
+        assert_eq!(sheet.to_csv(), input);
     }
 }

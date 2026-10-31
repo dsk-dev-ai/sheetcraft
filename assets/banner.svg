@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="SheetCraft: the spreadsheet editor rebuilt in pure Rust">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#070B14"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#1E293B" stroke-width="1" opacity="0.45"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+  <circle cx="1040" cy="120" r="380" fill="url(#glow)"/>
+
+  <g transform="translate(96 184)">
+    <rect width="160" height="160" rx="36" fill="#0B1220" stroke="#1E293B"/>
+    <g stroke="#1E293B" stroke-width="1" opacity="0.8">
+      <path d="M40 0V160M80 0V160M120 0V160"/>
+      <path d="M0 40H160M0 80H160M0 120H160"/>
+    </g>
+    <g fill="url(#accent)">
+      <rect x="38" y="40" width="84" height="24" rx="7"/>
+      <rect x="38" y="40" width="24" height="60" rx="7"/>
+      <rect x="38" y="76" width="84" height="24" rx="7"/>
+      <rect x="98" y="76" width="24" height="60" rx="7"/>
+      <rect x="38" y="112" width="84" height="24" rx="7"/>
+    </g>
+  </g>
+
+  <g font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="300" y="268" font-size="86" font-weight="700" letter-spacing="-2" fill="#F8FAFC">SheetCraft</text>
+    <text x="304" y="326" font-size="28" fill="#94A3B8">The spreadsheet editor rebuilt in pure Rust.</text>
+  </g>
+
+  <g font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" font-weight="600">
+    <rect x="304" y="372" width="112" height="42" rx="21" fill="#0B1220" stroke="#34D399" stroke-opacity="0.5"/>
+    <text x="360" y="399" text-anchor="middle" fill="#6EE7B7">Offline</text>
+    <rect x="428" y="372" width="112" height="42" rx="21" fill="#0B1220" stroke="#22D3EE" stroke-opacity="0.5"/>
+    <text x="484" y="399" text-anchor="middle" fill="#67E8F9">Instant</text>
+    <rect x="552" y="372" width="134" height="42" rx="21" fill="#0B1220" stroke="#94A3B8" stroke-opacity="0.4"/>
+    <text x="619" y="399" text-anchor="middle" fill="#CBD5E1">Pure Rust</text>
+  </g>
+
+  <g transform="rotate(6 1030 330)">
+    <rect x="820" y="140" width="420" height="400" rx="24" fill="#0B1220" stroke="#1E293B"/>
+    <rect x="820" y="140" width="420" height="54" rx="24" fill="#111C33"/>
+    <circle cx="850" cy="167" r="5" fill="#EF4444"/>
+    <circle cx="870" cy="167" r="5" fill="#F59E0B"/>
+    <circle cx="890" cy="167" r="5" fill="#22C55E"/>
+
+    <rect x="842" y="212" width="376" height="38" rx="9" fill="#0F172A" stroke="#1E293B"/>
+    <text x="858" y="237" font-family="'SFMono-Regular', Consolas, monospace" font-size="15" fill="#34D399">=SUM(B2:B5)</text>
+
+    <g font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+      <text x="858" y="290" fill="#64748B">Month</text>
+      <text x="1080" y="290" fill="#64748B">Revenue</text>
+      <text x="858" y="330" fill="#CBD5E1">Jan</text>
+      <text x="1080" y="330" fill="#CBD5E1">1,200</text>
+      <text x="858" y="370" fill="#CBD5E1">Feb</text>
+      <text x="1080" y="370" fill="#CBD5E1">1,850</text>
+      <text x="858" y="410" fill="#CBD5E1">Mar</text>
+      <text x="1080" y="410" fill="#CBD5E1">2,400</text>
+      <text x="858" y="450" fill="#CBD5E1">Apr</text>
+      <text x="1080" y="450" fill="#CBD5E1">3,100</text>
+    </g>
+
+    <g stroke="#1E293B">
+      <path d="M842 302H1218"/>
+      <path d="M842 468H1218"/>
+      <path d="M1040 278V468"/>
+    </g>
+
+    <rect x="842" y="468" width="376" height="46" rx="10" fill="#052E2B"/>
+    <g font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600">
+      <text x="858" y="497" fill="#6EE7B7">Total</text>
+      <text x="1080" y="497" fill="#6EE7B7">8,550</text>
+    </g>
+  </g>
+</svg>
