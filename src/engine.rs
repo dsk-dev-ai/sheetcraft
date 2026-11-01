@@ -35,6 +35,10 @@ impl Sheet {
         }
     }
 
+    pub fn formatted_cells(&self) -> impl Iterator<Item = (&CellRef, &CellFormat)> {
+        self.formats.iter()
+    }
+
     pub fn set_a1(
         &mut self,
         reference: &str,
@@ -404,6 +408,7 @@ mod tests {
             text_color: Some(crate::Rgb::new(248, 113, 113)),
             fill_color: None,
             number_format: crate::NumberFormat::Currency { decimals: 2 },
+            ..CellFormat::default()
         };
         assert_eq!(sheet.format(&cell), CellFormat::default());
         sheet.set(cell, "42");

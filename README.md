@@ -36,8 +36,8 @@ Early core engine. The repository currently ships:
 - A native desktop app with a virtualized grid, formula bar with reference
   highlighting, range selection, keyboard navigation, copy and paste, and undo
   and redo
-- Number formats, bold text, text colors, and cell fills in the desktop app,
-  exported to XLSX
+- Number formats, bold text, text colors, cell fills, and cell borders in the
+  desktop app, exported to XLSX
 - A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
@@ -71,8 +71,8 @@ cell, or use double-click or F2 to edit the current value. Arrow keys move the
 selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
-fill colors, and number formats to the current selection; Ctrl/Cmd+B toggles
-bold.
+fill colors, borders, and number formats to the current selection; Ctrl/Cmd+B
+toggles bold.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 

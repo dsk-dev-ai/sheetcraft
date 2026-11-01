@@ -8,4 +8,4 @@ pub mod xlsx;
 
 pub use cell::{CellError, CellRef, CellValue};
 pub use engine::Sheet;
-pub use format::{CellFormat, NumberFormat, Rgb};
+pub use format::{BORDER_COLOR, BorderPreset, Borders, CellFormat, NumberFormat, Rgb};

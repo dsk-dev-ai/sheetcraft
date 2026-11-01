@@ -7,6 +7,8 @@ pub struct Rgb {
     pub b: u8,
 }
 
+pub const BORDER_COLOR: Rgb = Rgb::new(148, 163, 184);
+
 impl Rgb {
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
@@ -95,11 +97,83 @@ impl fmt::Display for NumberFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Borders {
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+    pub left: bool,
+}
+
+impl Borders {
+    pub const ALL: Self = Self {
+        top: true,
+        right: true,
+        bottom: true,
+        left: true,
+    };
+
+    pub fn is_default(self) -> bool {
+        self == Self::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BorderPreset {
+    #[default]
+    None,
+    All,
+    Outer,
+    Bottom,
+}
+
+impl BorderPreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "No borders",
+            Self::All => "All borders",
+            Self::Outer => "Outer borders",
+            Self::Bottom => "Bottom border",
+        }
+    }
+
+    pub const fn borders(
+        self,
+        is_top: bool,
+        is_left: bool,
+        is_bottom: bool,
+        is_right: bool,
+    ) -> Borders {
+        match self {
+            Self::None => Borders {
+                top: false,
+                right: false,
+                bottom: false,
+                left: false,
+            },
+            Self::All => Borders::ALL,
+            Self::Outer => Borders {
+                top: is_top,
+                right: is_right,
+                bottom: is_bottom,
+                left: is_left,
+            },
+            Self::Bottom => Borders {
+                top: false,
+                right: false,
+                bottom: true,
+                left: false,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CellFormat {
     pub bold: bool,
     pub text_color: Option<Rgb>,
     pub fill_color: Option<Rgb>,
     pub number_format: NumberFormat,
+    pub borders: Borders,
 }
 
 impl CellFormat {
@@ -162,6 +236,37 @@ mod tests {
         );
         assert_eq!(NumberFormat::Percent { decimals: 0 }.apply(0.25), "25%");
         assert_eq!(NumberFormat::Percent { decimals: 1 }.apply(0.125), "12.5%");
+    }
+
+    #[test]
+    fn builds_border_presets() {
+        assert!(
+            BorderPreset::None
+                .borders(true, true, true, true)
+                .is_default()
+        );
+        assert_eq!(
+            BorderPreset::All.borders(false, false, false, false),
+            Borders::ALL
+        );
+        assert_eq!(
+            BorderPreset::Outer.borders(true, false, true, false),
+            Borders {
+                top: true,
+                right: false,
+                bottom: true,
+                left: false,
+            }
+        );
+        assert_eq!(
+            BorderPreset::Bottom.borders(false, false, false, false),
+            Borders {
+                top: false,
+                right: false,
+                bottom: true,
+                left: false,
+            }
+        );
     }
 
     #[test]
