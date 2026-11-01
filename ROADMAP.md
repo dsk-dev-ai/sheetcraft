@@ -47,7 +47,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Bold, text colors, and cell fills
 - [x] XLSX export preserves cell formatting
 - [x] Cell borders
-- [ ] Column widths and row heights
+- [x] Column widths and row heights
 - [ ] Multiple sheets
 - [ ] Sorting and filtering
 - [ ] Charts

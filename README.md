@@ -38,6 +38,7 @@ Early core engine. The repository currently ships:
   and redo
 - Number formats, bold text, text colors, cell fills, and cell borders in the
   desktop app, exported to XLSX
+- Resizable columns and rows in the desktop app, exported to XLSX
 - A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
@@ -72,7 +73,7 @@ selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
 fill colors, borders, and number formats to the current selection; Ctrl/Cmd+B
-toggles bold.
+toggles bold. Drag a column or row header edge to resize it.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 
