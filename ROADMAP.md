@@ -50,7 +50,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Column widths and row heights
 - [x] Multiple sheets
 - [x] Sorting and filtering
-- [ ] Charts
+- [x] Charts
 - [ ] Freeze panes
 
 ## v0.5 Distribution
