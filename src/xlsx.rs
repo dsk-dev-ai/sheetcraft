@@ -41,6 +41,22 @@ impl Sheet {
     pub fn to_xlsx(&self, path: &str) -> Result<(), String> {
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
+        for (column, width) in self.column_widths() {
+            if *column == 0 || *column > 16_384 {
+                return Err("column size is outside the XLSX limit".to_string());
+            }
+            worksheet
+                .set_column_width_pixels((column - 1) as u16, u32::from(*width))
+                .map_err(|error| error.to_string())?;
+        }
+        for (row, height) in self.row_heights() {
+            if *row == 0 || *row > 1_048_576 {
+                return Err("row size is outside the XLSX limit".to_string());
+            }
+            worksheet
+                .set_row_height_pixels(row - 1, u32::from(*height))
+                .map_err(|error| error.to_string())?;
+        }
         let mut formats: HashMap<CellFormat, Format> = HashMap::new();
         let mut rows = 0;
         let mut columns = 0;
@@ -266,6 +282,8 @@ mod tests {
                 ..CellFormat::default()
             },
         );
+        sheet.set_column_width(1, Some(160));
+        sheet.set_row_height(1, Some(32));
         sheet.set_a1("A2", "=A1*2").unwrap();
         sheet.set_format(
             CellRef::new(2, 1),

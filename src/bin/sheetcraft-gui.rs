@@ -9,8 +9,12 @@ use sheetcraft::{
 const ROWS: usize = 1_000;
 const COLUMNS: usize = 26;
 const HEADER: f32 = 46.0;
-const CELL_WIDTH: f32 = 104.0;
-const CELL_HEIGHT: f32 = 24.0;
+const DEFAULT_COLUMN_WIDTH: u16 = 104;
+const DEFAULT_ROW_HEIGHT: u16 = 24;
+const MIN_COLUMN_WIDTH: u16 = 48;
+const MAX_COLUMN_WIDTH: u16 = 480;
+const MIN_ROW_HEIGHT: u16 = 18;
+const MAX_ROW_HEIGHT: u16 = 160;
 
 const BACKGROUND: Color32 = Color32::from_rgb(9, 13, 24);
 const PANEL: Color32 = Color32::from_rgb(15, 23, 42);
@@ -73,6 +77,93 @@ fn main() -> eframe::Result {
     )
 }
 
+#[derive(Clone, Copy)]
+enum ResizeTarget {
+    Column(usize),
+    Row(usize),
+}
+
+struct GridMetrics {
+    column_offsets: Vec<f32>,
+    row_offsets: Vec<f32>,
+}
+
+impl GridMetrics {
+    fn new(sheet: &Sheet) -> Self {
+        let mut column_offsets = Vec::with_capacity(COLUMNS + 1);
+        column_offsets.push(0.0);
+        for column in 1..=COLUMNS {
+            let width = sheet
+                .column_width(column as u32)
+                .unwrap_or(DEFAULT_COLUMN_WIDTH);
+            let last = *column_offsets.last().unwrap_or(&0.0);
+            column_offsets.push(last + f32::from(width));
+        }
+        let mut row_offsets = Vec::with_capacity(ROWS + 1);
+        row_offsets.push(0.0);
+        for row in 1..=ROWS {
+            let height = sheet.row_height(row as u32).unwrap_or(DEFAULT_ROW_HEIGHT);
+            let last = *row_offsets.last().unwrap_or(&0.0);
+            row_offsets.push(last + f32::from(height));
+        }
+        Self {
+            column_offsets,
+            row_offsets,
+        }
+    }
+
+    fn column_width(&self, column: usize) -> f32 {
+        self.column_offsets[column + 1] - self.column_offsets[column]
+    }
+
+    fn row_height(&self, row: usize) -> f32 {
+        self.row_offsets[row + 1] - self.row_offsets[row]
+    }
+}
+
+fn first_visible(offsets: &[f32], position: f32) -> usize {
+    offsets
+        .partition_point(|offset| *offset <= position)
+        .saturating_sub(1)
+}
+
+fn last_visible(offsets: &[f32], position: f32) -> usize {
+    offsets.partition_point(|offset| *offset < position)
+}
+
+fn cell_rect(metrics: &GridMetrics, origin: egui::Pos2, row: usize, column: usize) -> Rect {
+    Rect::from_min_max(
+        pos2(
+            origin.x + metrics.column_offsets[column],
+            origin.y + metrics.row_offsets[row],
+        ),
+        pos2(
+            origin.x + metrics.column_offsets[column + 1],
+            origin.y + metrics.row_offsets[row + 1],
+        ),
+    )
+}
+
+fn range_rect(
+    metrics: &GridMetrics,
+    origin: egui::Pos2,
+    top: usize,
+    left: usize,
+    bottom: usize,
+    right: usize,
+) -> Rect {
+    Rect::from_min_max(
+        pos2(
+            origin.x + metrics.column_offsets[left],
+            origin.y + metrics.row_offsets[top],
+        ),
+        pos2(
+            origin.x + metrics.column_offsets[right + 1],
+            origin.y + metrics.row_offsets[bottom + 1],
+        ),
+    )
+}
+
 struct App {
     sheet: Sheet,
     selected: CellRef,
@@ -84,6 +175,7 @@ struct App {
     undo: Vec<Sheet>,
     redo: Vec<Sheet>,
     focus_formula: bool,
+    resize_snapshot: Option<Sheet>,
 }
 
 impl App {
@@ -110,6 +202,7 @@ impl App {
             undo: Vec::new(),
             redo: Vec::new(),
             focus_formula: false,
+            resize_snapshot: None,
         }
     }
 
@@ -569,12 +662,16 @@ impl App {
     }
 
     fn grid(&mut self, ui: &mut egui::Ui) {
+        let metrics = GridMetrics::new(&self.sheet);
         let sheet = &self.sheet;
         let selected = self.selected;
         let (top, left, bottom, right) = self.selection_bounds();
         let references = formula::references(&self.formula);
         let mut clicked = None;
         let mut edit_requested = false;
+        let mut resize_started = false;
+        let mut resize_stopped = false;
+        let mut resize_update = None;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BACKGROUND))
@@ -584,8 +681,8 @@ impl App {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let size = vec2(
-                            HEADER + COLUMNS as f32 * CELL_WIDTH,
-                            HEADER + ROWS as f32 * CELL_HEIGHT,
+                            HEADER + metrics.column_offsets[COLUMNS],
+                            HEADER + metrics.row_offsets[ROWS],
                         );
                         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                         let painter = ui.painter_at(rect);
@@ -594,21 +691,18 @@ impl App {
                         let clip = ui.clip_rect().intersect(rect);
                         let body_left = rect.left() + HEADER;
                         let body_top = rect.top() + HEADER;
+                        let body_origin = pos2(body_left, body_top);
 
-                        let first_row = (((clip.top() - body_top) / CELL_HEIGHT).floor() as isize)
-                            .clamp(0, ROWS as isize - 1)
-                            as usize;
-                        let last_row = (((clip.bottom() - body_top) / CELL_HEIGHT).ceil() as usize)
-                            .min(ROWS)
-                            .max(first_row + 1);
-                        let first_column = (((clip.left() - body_left) / CELL_WIDTH).floor()
-                            as isize)
-                            .clamp(0, COLUMNS as isize - 1)
-                            as usize;
-                        let last_column = (((clip.right() - body_left) / CELL_WIDTH).ceil()
-                            as usize)
-                            .min(COLUMNS)
-                            .max(first_column + 1);
+                        let first_row = first_visible(&metrics.row_offsets, clip.top() - body_top)
+                            .min(ROWS - 1);
+                        let last_row = last_visible(&metrics.row_offsets, clip.bottom() - body_top)
+                            .clamp(first_row + 1, ROWS);
+                        let first_column =
+                            first_visible(&metrics.column_offsets, clip.left() - body_left)
+                                .min(COLUMNS - 1);
+                        let last_column =
+                            last_visible(&metrics.column_offsets, clip.right() - body_left)
+                                .clamp(first_column + 1, COLUMNS);
 
                         painter.rect_filled(
                             Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER)),
@@ -622,9 +716,10 @@ impl App {
                         );
 
                         for column in first_column..last_column {
-                            let x = body_left + column as f32 * CELL_WIDTH;
+                            let x = body_left + metrics.column_offsets[column];
+                            let width = metrics.column_width(column);
                             painter.text(
-                                pos2(x + CELL_WIDTH / 2.0, rect.top() + HEADER / 2.0),
+                                pos2(x + width / 2.0, rect.top() + HEADER / 2.0),
                                 Align2::CENTER_CENTER,
                                 CellRef::column_name(column as u32 + 1),
                                 FontId::proportional(12.0),
@@ -632,9 +727,10 @@ impl App {
                             );
                         }
                         for row in first_row..last_row {
-                            let y = body_top + row as f32 * CELL_HEIGHT;
+                            let y = body_top + metrics.row_offsets[row];
+                            let height = metrics.row_height(row);
                             painter.text(
-                                pos2(rect.left() + HEADER / 2.0, y + CELL_HEIGHT / 2.0),
+                                pos2(rect.left() + HEADER / 2.0, y + height / 2.0),
                                 Align2::CENTER_CENTER,
                                 (row + 1).to_string(),
                                 FontId::proportional(12.0),
@@ -646,15 +742,9 @@ impl App {
                             for column in first_column..last_column {
                                 let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
                                 let format = sheet.format(&reference);
-                                let cell_rect = Rect::from_min_size(
-                                    pos2(
-                                        body_left + column as f32 * CELL_WIDTH,
-                                        body_top + row as f32 * CELL_HEIGHT,
-                                    ),
-                                    vec2(CELL_WIDTH, CELL_HEIGHT),
-                                );
+                                let cell = cell_rect(&metrics, body_origin, row, column);
                                 if let Some(fill) = format.fill_color {
-                                    painter.rect_filled(cell_rect, 0.0, color32(fill));
+                                    painter.rect_filled(cell, 0.0, color32(fill));
                                 }
                                 let value = sheet.value(&reference);
                                 let text = display_value(&value, format.number_format);
@@ -665,20 +755,20 @@ impl App {
                                     .text_color
                                     .map(color32)
                                     .unwrap_or_else(|| if value.is_error() { ERROR } else { TEXT });
-                                let position = cell_rect.min + vec2(6.0, 4.0);
+                                let position = cell.min + vec2(6.0, 4.0);
                                 draw_text(&painter, position, &text, color, format.bold);
                             }
                         }
 
                         for column in first_column..=last_column {
-                            let x = body_left + column as f32 * CELL_WIDTH;
+                            let x = body_left + metrics.column_offsets[column];
                             painter.line_segment(
                                 [pos2(x, rect.top() + HEADER), pos2(x, rect.bottom())],
                                 Stroke::new(1.0, GRID_LINE),
                             );
                         }
                         for row in first_row..=last_row {
-                            let y = body_top + row as f32 * CELL_HEIGHT;
+                            let y = body_top + metrics.row_offsets[row];
                             painter.line_segment(
                                 [pos2(rect.left() + HEADER, y), pos2(rect.right(), y)],
                                 Stroke::new(1.0, GRID_LINE),
@@ -692,11 +782,9 @@ impl App {
                                 if borders.is_default() {
                                     continue;
                                 }
-                                let min = pos2(
-                                    body_left + column as f32 * CELL_WIDTH,
-                                    body_top + row as f32 * CELL_HEIGHT,
-                                );
-                                let max = min + vec2(CELL_WIDTH, CELL_HEIGHT);
+                                let cell = cell_rect(&metrics, body_origin, row, column);
+                                let min = cell.min;
+                                let max = cell.max;
                                 let stroke = Stroke::new(1.5, color32(BORDER_COLOR));
                                 if borders.top {
                                     painter.line_segment([min, pos2(max.x, min.y)], stroke);
@@ -718,32 +806,31 @@ impl App {
                                 formula::Reference::Cell(reference) => (reference, reference),
                                 formula::Reference::Range(start, end) => (start, end),
                             };
-                            let top = start.row.min(end.row);
-                            let bottom = start.row.max(end.row);
-                            let left = start.col.min(end.col);
-                            let right = start.col.max(end.col);
-                            let cell = Rect::from_min_size(
-                                pos2(
-                                    body_left + (left - 1) as f32 * CELL_WIDTH,
-                                    body_top + (top - 1) as f32 * CELL_HEIGHT,
-                                ),
-                                vec2(
-                                    (right - left + 1) as f32 * CELL_WIDTH,
-                                    (bottom - top + 1) as f32 * CELL_HEIGHT,
-                                ),
+                            let top = start.row.min(end.row) as usize;
+                            let bottom = start.row.max(end.row) as usize;
+                            let left = start.col.min(end.col) as usize;
+                            let right = start.col.max(end.col) as usize;
+                            if top > ROWS || left > COLUMNS {
+                                continue;
+                            }
+                            let cell = range_rect(
+                                &metrics,
+                                body_origin,
+                                (top - 1).min(ROWS - 1),
+                                (left - 1).min(COLUMNS - 1),
+                                (bottom - 1).min(ROWS - 1),
+                                (right - 1).min(COLUMNS - 1),
                             );
                             painter.rect_filled(cell, 0.0, REFERENCE);
                         }
 
-                        let selection = Rect::from_min_size(
-                            pos2(
-                                body_left + (left - 1) as f32 * CELL_WIDTH,
-                                body_top + (top - 1) as f32 * CELL_HEIGHT,
-                            ),
-                            vec2(
-                                (right - left + 1) as f32 * CELL_WIDTH,
-                                (bottom - top + 1) as f32 * CELL_HEIGHT,
-                            ),
+                        let selection = range_rect(
+                            &metrics,
+                            body_origin,
+                            (top - 1) as usize,
+                            (left - 1) as usize,
+                            (bottom - 1) as usize,
+                            (right - 1) as usize,
                         );
                         let fill = if top == bottom && left == right {
                             SELECTED
@@ -758,12 +845,11 @@ impl App {
                             StrokeKind::Inside,
                         );
 
-                        let active = Rect::from_min_size(
-                            pos2(
-                                body_left + (selected.col as usize - 1) as f32 * CELL_WIDTH,
-                                body_top + (selected.row as usize - 1) as f32 * CELL_HEIGHT,
-                            ),
-                            vec2(CELL_WIDTH, CELL_HEIGHT),
+                        let active = cell_rect(
+                            &metrics,
+                            body_origin,
+                            selected.row as usize - 1,
+                            selected.col as usize - 1,
                         );
                         let active_format = sheet.format(&selected);
                         let active_value = sheet.value(&selected);
@@ -778,25 +864,123 @@ impl App {
                             );
                         }
 
+                        for column in first_column..last_column {
+                            let x = body_left + metrics.column_offsets[column + 1];
+                            let handle = Rect::from_center_size(
+                                pos2(x, rect.top() + HEADER / 2.0),
+                                vec2(7.0, HEADER),
+                            );
+                            let handle_response = ui
+                                .interact(
+                                    handle,
+                                    ui.scope_id().with(("column-resize", column)),
+                                    egui::Sense::drag(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                            if handle_response.drag_started() {
+                                resize_started = true;
+                            }
+                            if handle_response.dragged() {
+                                resize_update = Some((
+                                    ResizeTarget::Column(column),
+                                    handle_response.drag_delta().x,
+                                ));
+                            }
+                            if handle_response.drag_stopped() {
+                                resize_stopped = true;
+                            }
+                        }
+                        for row in first_row..last_row {
+                            let y = body_top + metrics.row_offsets[row + 1];
+                            let handle = Rect::from_center_size(
+                                pos2(rect.left() + HEADER / 2.0, y),
+                                vec2(HEADER, 7.0),
+                            );
+                            let handle_response = ui
+                                .interact(
+                                    handle,
+                                    ui.scope_id().with(("row-resize", row)),
+                                    egui::Sense::drag(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                            if handle_response.drag_started() {
+                                resize_started = true;
+                            }
+                            if handle_response.dragged() {
+                                resize_update =
+                                    Some((ResizeTarget::Row(row), handle_response.drag_delta().y));
+                            }
+                            if handle_response.drag_stopped() {
+                                resize_stopped = true;
+                            }
+                        }
+
                         if response.clicked()
                             && let Some(position) = response.interact_pointer_pos()
                         {
                             let relative = position - rect.min;
                             if relative.x > HEADER && relative.y > HEADER {
-                                let row = ((relative.y - HEADER) / CELL_HEIGHT).floor() as usize;
-                                let column = ((relative.x - HEADER) / CELL_WIDTH).floor() as usize;
-                                if row < ROWS && column < COLUMNS {
-                                    let extend = ui.input(|input| input.modifiers.shift);
-                                    clicked = Some((
-                                        CellRef::new(row as u32 + 1, column as u32 + 1),
-                                        extend,
-                                    ));
-                                    edit_requested = response.double_clicked();
-                                }
+                                let row = first_visible(&metrics.row_offsets, relative.y - HEADER)
+                                    .min(ROWS - 1);
+                                let column =
+                                    first_visible(&metrics.column_offsets, relative.x - HEADER)
+                                        .min(COLUMNS - 1);
+                                let extend = ui.input(|input| input.modifiers.shift);
+                                clicked =
+                                    Some((CellRef::new(row as u32 + 1, column as u32 + 1), extend));
+                                edit_requested = response.double_clicked();
                             }
                         }
                     });
             });
+
+        if resize_started {
+            self.resize_snapshot = Some(self.sheet.clone());
+        }
+        if let Some((target, delta)) = resize_update {
+            let message = match target {
+                ResizeTarget::Column(column) => {
+                    let current = f32::from(
+                        self.sheet
+                            .column_width(column as u32 + 1)
+                            .unwrap_or(DEFAULT_COLUMN_WIDTH),
+                    );
+                    let width = (current + delta)
+                        .round()
+                        .clamp(f32::from(MIN_COLUMN_WIDTH), f32::from(MAX_COLUMN_WIDTH))
+                        as u16;
+                    self.sheet.set_column_width(
+                        column as u32 + 1,
+                        (width != DEFAULT_COLUMN_WIDTH).then_some(width),
+                    );
+                    format!(
+                        "Column {} width {} px",
+                        CellRef::column_name(column as u32 + 1),
+                        width
+                    )
+                }
+                ResizeTarget::Row(row) => {
+                    let current = f32::from(
+                        self.sheet
+                            .row_height(row as u32 + 1)
+                            .unwrap_or(DEFAULT_ROW_HEIGHT),
+                    );
+                    let height = (current + delta)
+                        .round()
+                        .clamp(f32::from(MIN_ROW_HEIGHT), f32::from(MAX_ROW_HEIGHT))
+                        as u16;
+                    self.sheet.set_row_height(
+                        row as u32 + 1,
+                        (height != DEFAULT_ROW_HEIGHT).then_some(height),
+                    );
+                    format!("Row {} height {} px", row + 1, height)
+                }
+            };
+            self.set_status(message, true);
+        }
+        if resize_stopped && let Some(before) = self.resize_snapshot.take() {
+            self.record(before);
+        }
 
         if let Some((reference, extend)) = clicked {
             self.selected = reference;
@@ -821,7 +1005,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(
-                                "Type or F2 edits  |  Shift+Arrows selects  |  Ctrl/Cmd+B bold  |  Ctrl/Cmd+C/V/Z  |  Ctrl/Cmd+S saves",
+                                "F2 edits  |  Drag headers resizes  |  Shift+Arrows selects  |  Ctrl/Cmd+B bold  |  Ctrl/Cmd+C/V/Z  |  Ctrl/Cmd+S saves",
                             )
                             .size(12.0)
                             .color(MUTED),
@@ -866,6 +1050,11 @@ fn demo_sheet() -> Sheet {
     for (reference, raw) in cells {
         sheet.set_a1(reference, raw).unwrap();
     }
+    sheet.set_column_width(1, Some(150));
+    sheet.set_column_width(2, Some(100));
+    sheet.set_column_width(3, Some(70));
+    sheet.set_column_width(4, Some(120));
+    sheet.set_row_height(1, Some(30));
     let header = CellFormat {
         bold: true,
         text_color: Some(Rgb::new(226, 232, 240)),
@@ -955,5 +1144,41 @@ fn draw_text(
             FontId::monospace(13.0),
             color,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_use_custom_and_default_sizes() {
+        let mut sheet = Sheet::new();
+        sheet.set_column_width(2, Some(200));
+        sheet.set_row_height(2, Some(40));
+        let metrics = GridMetrics::new(&sheet);
+        assert_eq!(metrics.column_width(0), f32::from(DEFAULT_COLUMN_WIDTH));
+        assert_eq!(metrics.column_width(1), 200.0);
+        assert_eq!(metrics.row_height(0), f32::from(DEFAULT_ROW_HEIGHT));
+        assert_eq!(metrics.row_height(1), 40.0);
+    }
+
+    #[test]
+    fn finds_visible_cells_and_rects() {
+        let mut sheet = Sheet::new();
+        sheet.set_column_width(2, Some(200));
+        let metrics = GridMetrics::new(&sheet);
+        assert_eq!(first_visible(&metrics.column_offsets, 0.0), 0);
+        assert_eq!(first_visible(&metrics.column_offsets, 105.0), 1);
+        assert_eq!(first_visible(&metrics.column_offsets, 205.0), 1);
+        assert_eq!(last_visible(&metrics.column_offsets, 100.0), 1);
+        assert_eq!(last_visible(&metrics.column_offsets, 205.0), 2);
+
+        let origin = pos2(0.0, 0.0);
+        let second = cell_rect(&metrics, origin, 0, 1);
+        assert_eq!(second.min, pos2(104.0, 0.0));
+        assert_eq!(second.max, pos2(304.0, f32::from(DEFAULT_ROW_HEIGHT)));
+        let range = range_rect(&metrics, origin, 0, 0, 0, 1);
+        assert_eq!(range.max.x, 304.0);
     }
 }

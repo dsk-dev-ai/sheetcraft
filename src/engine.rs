@@ -8,6 +8,8 @@ use crate::formula::{self, BinaryOp, Expr, UnaryOp};
 pub struct Sheet {
     cells: BTreeMap<CellRef, String>,
     formats: BTreeMap<CellRef, CellFormat>,
+    column_widths: BTreeMap<u32, u16>,
+    row_heights: BTreeMap<u32, u16>,
 }
 
 impl Sheet {
@@ -37,6 +39,44 @@ impl Sheet {
 
     pub fn formatted_cells(&self) -> impl Iterator<Item = (&CellRef, &CellFormat)> {
         self.formats.iter()
+    }
+
+    pub fn column_width(&self, column: u32) -> Option<u16> {
+        self.column_widths.get(&column).copied()
+    }
+
+    pub fn set_column_width(&mut self, column: u32, width: Option<u16>) {
+        match width {
+            Some(width) => {
+                self.column_widths.insert(column, width);
+            }
+            None => {
+                self.column_widths.remove(&column);
+            }
+        }
+    }
+
+    pub fn row_height(&self, row: u32) -> Option<u16> {
+        self.row_heights.get(&row).copied()
+    }
+
+    pub fn set_row_height(&mut self, row: u32, height: Option<u16>) {
+        match height {
+            Some(height) => {
+                self.row_heights.insert(row, height);
+            }
+            None => {
+                self.row_heights.remove(&row);
+            }
+        }
+    }
+
+    pub fn column_widths(&self) -> impl Iterator<Item = (&u32, &u16)> {
+        self.column_widths.iter()
+    }
+
+    pub fn row_heights(&self) -> impl Iterator<Item = (&u32, &u16)> {
+        self.row_heights.iter()
     }
 
     pub fn set_a1(
@@ -419,5 +459,22 @@ mod tests {
         assert_eq!(sheet.format(&cell), format);
         sheet.set_format(cell, CellFormat::default());
         assert_eq!(sheet.format(&cell), CellFormat::default());
+    }
+
+    #[test]
+    fn stores_column_widths_and_row_heights() {
+        let mut sheet = Sheet::new();
+        assert_eq!(sheet.column_width(2), None);
+        assert_eq!(sheet.row_height(3), None);
+        sheet.set_column_width(2, Some(160));
+        sheet.set_row_height(3, Some(32));
+        assert_eq!(sheet.column_width(2), Some(160));
+        assert_eq!(sheet.row_height(3), Some(32));
+        assert_eq!(sheet.column_widths().count(), 1);
+        assert_eq!(sheet.row_heights().count(), 1);
+        sheet.set_column_width(2, None);
+        sheet.set_row_height(3, None);
+        assert_eq!(sheet.column_width(2), None);
+        assert_eq!(sheet.row_height(3), None);
     }
 }
