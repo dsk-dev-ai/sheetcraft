@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Rect, RichText, Stroke, StrokeKind, pos2, vec2,
 };
@@ -86,10 +88,20 @@ enum ResizeTarget {
 struct GridMetrics {
     column_offsets: Vec<f32>,
     row_offsets: Vec<f32>,
+    hidden_rows: BTreeSet<u32>,
 }
 
 impl GridMetrics {
+    #[cfg(test)]
     fn new(sheet: &Sheet) -> Self {
+        Self::build(sheet, &BTreeSet::new())
+    }
+
+    fn with_hidden(sheet: &Sheet, hidden_rows: &BTreeSet<u32>) -> Self {
+        Self::build(sheet, hidden_rows)
+    }
+
+    fn build(sheet: &Sheet, hidden_rows: &BTreeSet<u32>) -> Self {
         let mut column_offsets = Vec::with_capacity(COLUMNS + 1);
         column_offsets.push(0.0);
         for column in 1..=COLUMNS {
@@ -102,14 +114,23 @@ impl GridMetrics {
         let mut row_offsets = Vec::with_capacity(ROWS + 1);
         row_offsets.push(0.0);
         for row in 1..=ROWS {
-            let height = sheet.row_height(row as u32).unwrap_or(DEFAULT_ROW_HEIGHT);
+            let height = if hidden_rows.contains(&(row as u32)) {
+                0
+            } else {
+                sheet.row_height(row as u32).unwrap_or(DEFAULT_ROW_HEIGHT)
+            };
             let last = *row_offsets.last().unwrap_or(&0.0);
             row_offsets.push(last + f32::from(height));
         }
         Self {
             column_offsets,
             row_offsets,
+            hidden_rows: hidden_rows.clone(),
         }
+    }
+
+    fn is_hidden(&self, row: usize) -> bool {
+        self.hidden_rows.contains(&(row as u32 + 1))
     }
 
     fn column_width(&self, column: usize) -> f32 {
@@ -177,6 +198,9 @@ struct App {
     redo: Vec<Workbook>,
     focus_formula: bool,
     resize_snapshot: Option<Workbook>,
+    filter_column: Option<u32>,
+    filter_query: String,
+    hidden_rows: BTreeSet<u32>,
 }
 
 impl App {
@@ -209,6 +233,9 @@ impl App {
             redo: Vec::new(),
             focus_formula: false,
             resize_snapshot: None,
+            filter_column: None,
+            filter_query: String::new(),
+            hidden_rows: BTreeSet::new(),
         }
     }
 
@@ -248,6 +275,7 @@ impl App {
             self.set_status(format!("Updated {selected}"), true);
         }
         self.record(before);
+        self.refresh_filter();
     }
 
     fn record(&mut self, before: Workbook) {
@@ -270,6 +298,7 @@ impl App {
         self.redo.push(current);
         self.clamp_active();
         self.sync_formula();
+        self.refresh_filter();
         self.set_status(format!("Undid change at {}", self.selected), true);
     }
 
@@ -282,6 +311,7 @@ impl App {
         self.undo.push(current);
         self.clamp_active();
         self.sync_formula();
+        self.refresh_filter();
         self.set_status(format!("Redid change at {}", self.selected), true);
     }
 
@@ -348,6 +378,7 @@ impl App {
         }
         self.record(before);
         self.sync_formula();
+        self.refresh_filter();
         self.set_status(format!("Pasted {count} cells at {}", self.selected), true);
     }
 
@@ -356,6 +387,7 @@ impl App {
             Ok(workbook) => {
                 self.workbook = workbook;
                 self.active = 0;
+                self.reset_filter();
                 self.selected = CellRef::new(1, 1);
                 self.anchor = self.selected;
                 self.undo.clear();
@@ -446,8 +478,121 @@ impl App {
         );
     }
 
+    fn sort_active(&mut self, ascending: bool) {
+        let Some((rows, columns)) = self.sheet().bounds() else {
+            self.set_status("Nothing to sort".to_string(), false);
+            return;
+        };
+        let (selection_top, selection_left, selection_bottom, selection_right) =
+            self.selection_bounds();
+        let explicit_range = selection_top < selection_bottom;
+        let (top, left, bottom, right, key_column) = if explicit_range {
+            (
+                selection_top,
+                selection_left,
+                selection_bottom,
+                selection_right,
+                self.selected.col,
+            )
+        } else {
+            if self.selected.col == 0 || self.selected.col > columns {
+                self.set_status("Select a column with data to sort by".to_string(), false);
+                return;
+            }
+            (1, 1, rows, columns, self.selected.col)
+        };
+        let data_top = if top == 1 { 2 } else { top };
+        if data_top > bottom {
+            self.set_status("Nothing to sort".to_string(), false);
+            return;
+        }
+
+        let before = self.workbook.clone();
+        if let Err(error) = self
+            .sheet_mut()
+            .sort_rows(data_top, left, bottom, right, key_column, ascending)
+        {
+            self.set_status(format!("Sort failed: {error}"), false);
+            return;
+        }
+        self.sync_formula();
+        self.refresh_filter();
+        self.record(before);
+        self.set_status(
+            format!(
+                "Sorted {}:{} by {} {}",
+                CellRef::new(data_top, left),
+                CellRef::new(bottom, right),
+                CellRef::column_name(key_column),
+                if ascending { "ascending" } else { "descending" }
+            ),
+            true,
+        );
+    }
+
+    fn reset_filter(&mut self) {
+        self.filter_column = None;
+        self.filter_query.clear();
+        self.hidden_rows.clear();
+    }
+
+    fn clear_filter(&mut self) {
+        self.reset_filter();
+        self.set_status("Cleared filter".to_string(), true);
+    }
+
+    fn refresh_filter(&mut self) {
+        if self.filter_query.trim().is_empty() {
+            self.reset_filter();
+            return;
+        }
+        let column = self.filter_column.unwrap_or(self.selected.col);
+        self.filter_column = Some(column);
+        let Some((rows, columns)) = self.sheet().bounds() else {
+            self.hidden_rows.clear();
+            return;
+        };
+        if rows <= 1 || column == 0 || column > columns {
+            self.hidden_rows.clear();
+            return;
+        }
+        let matching = self
+            .sheet()
+            .filter_rows(2, rows, column, &self.filter_query);
+        self.hidden_rows = (2..=rows).filter(|row| !matching.contains(row)).collect();
+        self.ensure_selection_visible(rows);
+    }
+
+    fn ensure_selection_visible(&mut self, rows: u32) {
+        if !self.hidden_rows.contains(&self.selected.row) {
+            return;
+        }
+        let next = (self.selected.row..=rows)
+            .find(|row| !self.hidden_rows.contains(row))
+            .or_else(|| {
+                (1..self.selected.row)
+                    .rev()
+                    .find(|row| !self.hidden_rows.contains(row))
+            });
+        if let Some(row) = next {
+            self.selected = CellRef::new(row, self.selected.col);
+            self.anchor = self.selected;
+            self.sync_formula();
+        }
+    }
+
     fn move_selection(&mut self, row_delta: isize, column_delta: isize, extend: bool) {
-        let row = (self.selected.row as isize + row_delta).clamp(1, ROWS as isize);
+        let mut row = (self.selected.row as isize + row_delta).clamp(1, ROWS as isize);
+        if row_delta != 0 {
+            let step = row_delta.signum();
+            while self.hidden_rows.contains(&(row as u32)) {
+                row += step;
+                if row < 1 || row > ROWS as isize {
+                    row = self.selected.row as isize;
+                    break;
+                }
+            }
+        }
         let column = (self.selected.col as isize + column_delta).clamp(1, COLUMNS as isize);
         self.selected = CellRef::new(row as u32, column as u32);
         if !extend {
@@ -506,6 +651,7 @@ impl App {
             }
             self.formula.clear();
             self.record(before);
+            self.refresh_filter();
             self.set_status(format!("Cleared {}", self.selection_label()), true);
         }
         if ui.input(|input| input.modifiers.command && input.key_pressed(Key::C)) {
@@ -690,11 +836,56 @@ impl App {
                             }
                         });
                 });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Data").color(MUTED));
+                    if ui
+                        .button("Sort A-Z")
+                        .on_hover_text(
+                            "Sort the used range by the active column, keeping row 1 as a header",
+                        )
+                        .clicked()
+                    {
+                        self.sort_active(true);
+                    }
+                    if ui
+                        .button("Sort Z-A")
+                        .on_hover_text("Sort the used range by the active column in reverse")
+                        .clicked()
+                    {
+                        self.sort_active(false);
+                    }
+                    ui.separator();
+                    let filter_column = self.filter_column.unwrap_or(self.selected.col);
+                    ui.label(format!("Filter {}", CellRef::column_name(filter_column)));
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_query)
+                            .desired_width(180.0)
+                            .hint_text("Text in active column"),
+                    );
+                    if response.changed() {
+                        self.filter_column = Some(self.selected.col);
+                        self.refresh_filter();
+                    }
+                    if ui
+                        .button("Clear")
+                        .on_hover_text("Clear the filter")
+                        .clicked()
+                    {
+                        self.clear_filter();
+                    }
+                    if !self.hidden_rows.is_empty() {
+                        ui.label(
+                            RichText::new(format!("{} hidden", self.hidden_rows.len()))
+                                .color(MUTED),
+                        );
+                    }
+                });
             });
     }
 
     fn grid(&mut self, ui: &mut egui::Ui) {
-        let metrics = GridMetrics::new(self.sheet());
+        let metrics = GridMetrics::with_hidden(self.sheet(), &self.hidden_rows);
         let sheet = self.sheet();
         let selected = self.selected;
         let (top, left, bottom, right) = self.selection_bounds();
@@ -759,6 +950,9 @@ impl App {
                             );
                         }
                         for row in first_row..last_row {
+                            if metrics.is_hidden(row) {
+                                continue;
+                            }
                             let y = body_top + metrics.row_offsets[row];
                             let height = metrics.row_height(row);
                             painter.text(
@@ -771,6 +965,9 @@ impl App {
                         }
 
                         for row in first_row..last_row {
+                            if metrics.is_hidden(row) {
+                                continue;
+                            }
                             for column in first_column..last_column {
                                 let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
                                 let format = sheet.format(&reference);
@@ -800,6 +997,9 @@ impl App {
                             );
                         }
                         for row in first_row..=last_row {
+                            if metrics.is_hidden(row) {
+                                continue;
+                            }
                             let y = body_top + metrics.row_offsets[row];
                             painter.line_segment(
                                 [pos2(rect.left() + HEADER, y), pos2(rect.right(), y)],
@@ -808,6 +1008,9 @@ impl App {
                         }
 
                         for row in first_row..last_row {
+                            if metrics.is_hidden(row) {
+                                continue;
+                            }
                             for column in first_column..last_column {
                                 let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
                                 let borders = sheet.format(&reference).borders;
@@ -923,6 +1126,9 @@ impl App {
                             }
                         }
                         for row in first_row..last_row {
+                            if metrics.is_hidden(row) {
+                                continue;
+                            }
                             let y = body_top + metrics.row_offsets[row + 1];
                             let handle = Rect::from_center_size(
                                 pos2(rect.left() + HEADER / 2.0, y),
@@ -1068,6 +1274,7 @@ impl App {
             && index != self.active
         {
             self.active = index;
+            self.reset_filter();
             self.selected = CellRef::new(1, 1);
             self.anchor = self.selected;
             self.sync_formula();
@@ -1078,6 +1285,7 @@ impl App {
             let name = self.workbook.next_sheet_name();
             self.workbook.push(name.clone(), Sheet::new());
             self.active = self.workbook.len() - 1;
+            self.reset_filter();
             self.selected = CellRef::new(1, 1);
             self.anchor = self.selected;
             self.sync_formula();
@@ -1092,6 +1300,7 @@ impl App {
                 let active = self.active;
                 let removed = self.workbook.remove(active);
                 self.clamp_active();
+                self.reset_filter();
                 self.selected = CellRef::new(1, 1);
                 self.anchor = self.selected;
                 self.sync_formula();
@@ -1285,6 +1494,61 @@ fn draw_text(
 mod tests {
     use super::*;
 
+    fn test_app() -> App {
+        let workbook = demo_workbook();
+        let selected = CellRef::new(2, 1);
+        App {
+            formula: workbook
+                .sheet(0)
+                .and_then(|sheet| sheet.raw(&selected))
+                .unwrap_or_default()
+                .to_string(),
+            workbook,
+            active: 0,
+            selected,
+            anchor: selected,
+            path: String::new(),
+            status: String::new(),
+            status_ok: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            focus_formula: false,
+            resize_snapshot: None,
+            filter_column: None,
+            filter_query: String::new(),
+            hidden_rows: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn filters_rows_and_moves_selection_to_a_visible_row() {
+        let mut app = test_app();
+        app.selected = CellRef::new(3, 1);
+        app.anchor = app.selected;
+        app.filter_query = "key".to_string();
+        app.refresh_filter();
+        assert_eq!(app.filter_column, Some(1));
+        assert_eq!(app.hidden_rows, BTreeSet::from([3, 4, 5]));
+        assert_eq!(app.selected, CellRef::new(2, 1));
+
+        app.filter_query.clear();
+        app.refresh_filter();
+        assert!(app.hidden_rows.is_empty());
+        assert_eq!(app.filter_column, None);
+    }
+
+    #[test]
+    fn sorts_by_the_active_column_and_keeps_formulas_with_their_rows() {
+        let mut app = test_app();
+        app.sort_active(true);
+        let sheet = app.sheet();
+        assert_eq!(sheet.raw(&CellRef::new(2, 1)), Some("Dock"));
+        assert_eq!(sheet.raw(&CellRef::new(2, 4)), Some("=B2*C2"));
+        assert_eq!(sheet.raw(&CellRef::new(3, 1)), Some("Keyboard"));
+        assert_eq!(sheet.raw(&CellRef::new(5, 1)), Some("Total"));
+        assert_eq!(app.undo.len(), 1);
+    }
+
     #[test]
     fn metrics_use_custom_and_default_sizes() {
         let mut sheet = Sheet::new();
@@ -1295,6 +1559,19 @@ mod tests {
         assert_eq!(metrics.column_width(1), 200.0);
         assert_eq!(metrics.row_height(0), f32::from(DEFAULT_ROW_HEIGHT));
         assert_eq!(metrics.row_height(1), 40.0);
+    }
+
+    #[test]
+    fn hidden_rows_have_zero_height_and_are_skipped() {
+        let sheet = Sheet::new();
+        let hidden = BTreeSet::from([2, 3]);
+        let metrics = GridMetrics::with_hidden(&sheet, &hidden);
+        assert!(!metrics.is_hidden(0));
+        assert!(metrics.is_hidden(1));
+        assert_eq!(metrics.row_height(0), f32::from(DEFAULT_ROW_HEIGHT));
+        assert_eq!(metrics.row_height(1), 0.0);
+        assert_eq!(metrics.row_offsets[3], f32::from(DEFAULT_ROW_HEIGHT));
+        assert_eq!(first_visible(&metrics.row_offsets, 24.0), 3);
     }
 
     #[test]
