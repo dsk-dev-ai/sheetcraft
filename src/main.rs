@@ -1,7 +1,7 @@
 use std::io::Read;
 
 use sheetcraft::io;
-use sheetcraft::{CellRef, CellValue, Sheet};
+use sheetcraft::{CellRef, CellValue, Sheet, Workbook};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,8 +32,8 @@ fn main() {
                 usage();
                 std::process::exit(1);
             }
-            match Sheet::from_xlsx(&args[1]) {
-                Ok(sheet) => preview_sheet(&sheet),
+            match io::load_workbook(&args[1]) {
+                Ok(workbook) => preview_workbook(&workbook),
                 Err(error) => {
                     eprintln!("error: {error}");
                     std::process::exit(1);
@@ -45,7 +45,9 @@ fn main() {
                 usage();
                 std::process::exit(1);
             }
-            match io::load(&args[1]).and_then(|sheet| io::save(&sheet, &args[2])) {
+            match io::load_workbook(&args[1])
+                .and_then(|workbook| io::save_workbook(&workbook, &args[2]))
+            {
                 Ok(()) => println!("wrote {}", args[2]),
                 Err(error) => {
                     eprintln!("error: {error}");
@@ -64,7 +66,7 @@ fn usage() {
     println!("  sheetcraft demo");
     println!("  sheetcraft eval \"=SUM(A1:A3) * 2\"");
     println!("  sheetcraft csv <file.csv>      preview a CSV file, use - for stdin");
-    println!("  sheetcraft xlsx <file.xlsx>    preview the first worksheet of an XLSX file");
+    println!("  sheetcraft xlsx <file.xlsx>    list sheets and preview the first worksheet");
     println!("  sheetcraft convert <in> <out>  convert between .csv and .xlsx");
 }
 
@@ -84,6 +86,16 @@ fn eval_formula(input: &str) {
     let formula = input.strip_prefix('=').unwrap_or(input);
     sheet.set(target, format!("={formula}"));
     println!("{}", sheet.value(&target));
+}
+
+fn preview_workbook(workbook: &Workbook) {
+    if workbook.len() > 1 {
+        let names: Vec<&str> = workbook.iter().map(|(name, _)| name).collect();
+        println!("{} sheets: {}", workbook.len(), names.join(", "));
+    }
+    if let Some(sheet) = workbook.first() {
+        preview_sheet(sheet);
+    }
 }
 
 fn preview_sheet(sheet: &Sheet) {

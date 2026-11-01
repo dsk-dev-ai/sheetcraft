@@ -3,7 +3,7 @@ use eframe::egui::{
 };
 use sheetcraft::{
     BORDER_COLOR, BorderPreset, Borders, CellFormat, CellRef, CellValue, NumberFormat, Rgb, Sheet,
-    formula, io,
+    Workbook, formula, io,
 };
 
 const ROWS: usize = 1_000;
@@ -165,17 +165,18 @@ fn range_rect(
 }
 
 struct App {
-    sheet: Sheet,
+    workbook: Workbook,
+    active: usize,
     selected: CellRef,
     anchor: CellRef,
     formula: String,
     path: String,
     status: String,
     status_ok: bool,
-    undo: Vec<Sheet>,
-    redo: Vec<Sheet>,
+    undo: Vec<Workbook>,
+    redo: Vec<Workbook>,
     focus_formula: bool,
-    resize_snapshot: Option<Sheet>,
+    resize_snapshot: Option<Workbook>,
 }
 
 impl App {
@@ -189,10 +190,15 @@ impl App {
         cc.egui_ctx.set_visuals(visuals);
 
         let selected = CellRef::new(1, 1);
-        let sheet = demo_sheet();
-        let formula = sheet.raw(&selected).unwrap_or_default().to_string();
+        let workbook = demo_workbook();
+        let formula = workbook
+            .sheet(0)
+            .and_then(|sheet| sheet.raw(&selected))
+            .unwrap_or_default()
+            .to_string();
         Self {
-            sheet,
+            workbook,
+            active: 0,
             selected,
             anchor: selected,
             formula,
@@ -206,28 +212,46 @@ impl App {
         }
     }
 
+    fn sheet(&self) -> &Sheet {
+        self.workbook
+            .sheet(self.active)
+            .expect("active sheet is always valid")
+    }
+
+    fn sheet_mut(&mut self) -> &mut Sheet {
+        self.workbook
+            .sheet_mut(self.active)
+            .expect("active sheet is always valid")
+    }
+
+    fn clamp_active(&mut self) {
+        self.active = self.active.min(self.workbook.len().saturating_sub(1));
+    }
+
     fn sync_formula(&mut self) {
         self.formula = self
-            .sheet
+            .sheet()
             .raw(&self.selected)
             .unwrap_or_default()
             .to_string();
     }
 
     fn commit(&mut self) {
-        let before = self.sheet.clone();
+        let before = self.workbook.clone();
+        let selected = self.selected;
         if self.formula.is_empty() {
-            self.sheet.clear(&self.selected);
-            self.set_status(format!("Cleared {}", self.selected), true);
+            self.sheet_mut().clear(&selected);
+            self.set_status(format!("Cleared {selected}"), true);
         } else {
-            self.sheet.set(self.selected, self.formula.clone());
-            self.set_status(format!("Updated {}", self.selected), true);
+            let raw = self.formula.clone();
+            self.sheet_mut().set(selected, raw);
+            self.set_status(format!("Updated {selected}"), true);
         }
         self.record(before);
     }
 
-    fn record(&mut self, before: Sheet) {
-        if before == self.sheet {
+    fn record(&mut self, before: Workbook) {
+        if before == self.workbook {
             return;
         }
         self.undo.push(before);
@@ -242,8 +266,9 @@ impl App {
             self.set_status("Nothing to undo".to_string(), false);
             return;
         };
-        let current = std::mem::replace(&mut self.sheet, previous);
+        let current = std::mem::replace(&mut self.workbook, previous);
         self.redo.push(current);
+        self.clamp_active();
         self.sync_formula();
         self.set_status(format!("Undid change at {}", self.selected), true);
     }
@@ -253,8 +278,9 @@ impl App {
             self.set_status("Nothing to redo".to_string(), false);
             return;
         };
-        let current = std::mem::replace(&mut self.sheet, next);
+        let current = std::mem::replace(&mut self.workbook, next);
         self.undo.push(current);
+        self.clamp_active();
         self.sync_formula();
         self.set_status(format!("Redid change at {}", self.selected), true);
     }
@@ -288,7 +314,7 @@ impl App {
             let mut fields = Vec::new();
             for column in left..=right {
                 let reference = CellRef::new(row, column);
-                fields.push(self.sheet.raw(&reference).unwrap_or_default().to_string());
+                fields.push(self.sheet().raw(&reference).unwrap_or_default().to_string());
             }
             rows.push(fields.join("\t"));
         }
@@ -297,23 +323,25 @@ impl App {
     }
 
     fn paste(&mut self, text: &str) {
-        let before = self.sheet.clone();
+        let before = self.workbook.clone();
+        let selected = self.selected;
         let mut count = 0;
+        let sheet = self.sheet_mut();
         for (row_offset, line) in text.lines().enumerate() {
-            let row = self.selected.row as usize + row_offset;
+            let row = selected.row as usize + row_offset;
             if row > ROWS {
                 break;
             }
             for (column_offset, field) in line.split('\t').enumerate() {
-                let column = self.selected.col as usize + column_offset;
+                let column = selected.col as usize + column_offset;
                 if column > COLUMNS {
                     break;
                 }
                 let reference = CellRef::new(row as u32, column as u32);
                 if field.is_empty() {
-                    self.sheet.clear(&reference);
+                    sheet.clear(&reference);
                 } else {
-                    self.sheet.set(reference, field);
+                    sheet.set(reference, field);
                 }
                 count += 1;
             }
@@ -324,9 +352,10 @@ impl App {
     }
 
     fn open(&mut self) {
-        match io::load(&self.path) {
-            Ok(sheet) => {
-                self.sheet = sheet;
+        match io::load_workbook(&self.path) {
+            Ok(workbook) => {
+                self.workbook = workbook;
+                self.active = 0;
                 self.selected = CellRef::new(1, 1);
                 self.anchor = self.selected;
                 self.undo.clear();
@@ -339,7 +368,7 @@ impl App {
     }
 
     fn save(&mut self) {
-        match io::save(&self.sheet, &self.path) {
+        match io::save_workbook(&self.workbook, &self.path) {
             Ok(()) => self.set_status(format!("Saved {}", self.path), true),
             Err(error) => self.set_status(format!("Save failed: {error}"), false),
         }
@@ -351,14 +380,15 @@ impl App {
     }
 
     fn apply_format(&mut self, message: &str, update: impl Fn(&mut CellFormat)) {
-        let before = self.sheet.clone();
+        let before = self.workbook.clone();
         let (top, left, bottom, right) = self.selection_bounds();
+        let sheet = self.sheet_mut();
         for row in top..=bottom {
             for column in left..=right {
                 let reference = CellRef::new(row, column);
-                let mut format = self.sheet.format(&reference);
+                let mut format = sheet.format(&reference);
                 update(&mut format);
-                self.sheet.set_format(reference, format);
+                sheet.set_format(reference, format);
             }
         }
         self.record(before);
@@ -366,7 +396,7 @@ impl App {
     }
 
     fn toggle_bold(&mut self) {
-        let bold = !self.sheet.format(&self.selected).bold;
+        let bold = !self.sheet().format(&self.selected).bold;
         let message = if bold { "Bold" } else { "Removed bold from" };
         self.apply_format(message, |format| format.bold = bold);
     }
@@ -397,15 +427,16 @@ impl App {
     }
 
     fn set_borders(&mut self, preset: BorderPreset) {
-        let before = self.sheet.clone();
+        let before = self.workbook.clone();
         let (top, left, bottom, right) = self.selection_bounds();
+        let sheet = self.sheet_mut();
         for row in top..=bottom {
             for column in left..=right {
                 let reference = CellRef::new(row, column);
-                let mut format = self.sheet.format(&reference);
+                let mut format = sheet.format(&reference);
                 format.borders =
                     preset.borders(row == top, column == left, row == bottom, column == right);
-                self.sheet.set_format(reference, format);
+                sheet.set_format(reference, format);
             }
         }
         self.record(before);
@@ -465,11 +496,12 @@ impl App {
             self.move_selection(0, 1, extend);
         }
         if ui.input(|input| input.key_pressed(Key::Delete)) {
-            let before = self.sheet.clone();
+            let before = self.workbook.clone();
             let (top, left, bottom, right) = self.selection_bounds();
+            let sheet = self.sheet_mut();
             for row in top..=bottom {
                 for column in left..=right {
-                    self.sheet.clear(&CellRef::new(row, column));
+                    sheet.clear(&CellRef::new(row, column));
                 }
             }
             self.formula.clear();
@@ -586,7 +618,7 @@ impl App {
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    let selected_format = self.sheet.format(&self.selected);
+                    let selected_format = self.sheet().format(&self.selected);
                     if ui
                         .add(
                             egui::Button::new(RichText::new("B").strong())
@@ -662,8 +694,8 @@ impl App {
     }
 
     fn grid(&mut self, ui: &mut egui::Ui) {
-        let metrics = GridMetrics::new(&self.sheet);
-        let sheet = &self.sheet;
+        let metrics = GridMetrics::new(self.sheet());
+        let sheet = self.sheet();
         let selected = self.selected;
         let (top, left, bottom, right) = self.selection_bounds();
         let references = formula::references(&self.formula);
@@ -935,13 +967,13 @@ impl App {
             });
 
         if resize_started {
-            self.resize_snapshot = Some(self.sheet.clone());
+            self.resize_snapshot = Some(self.workbook.clone());
         }
         if let Some((target, delta)) = resize_update {
             let message = match target {
                 ResizeTarget::Column(column) => {
                     let current = f32::from(
-                        self.sheet
+                        self.sheet()
                             .column_width(column as u32 + 1)
                             .unwrap_or(DEFAULT_COLUMN_WIDTH),
                     );
@@ -949,7 +981,7 @@ impl App {
                         .round()
                         .clamp(f32::from(MIN_COLUMN_WIDTH), f32::from(MAX_COLUMN_WIDTH))
                         as u16;
-                    self.sheet.set_column_width(
+                    self.sheet_mut().set_column_width(
                         column as u32 + 1,
                         (width != DEFAULT_COLUMN_WIDTH).then_some(width),
                     );
@@ -961,7 +993,7 @@ impl App {
                 }
                 ResizeTarget::Row(row) => {
                     let current = f32::from(
-                        self.sheet
+                        self.sheet()
                             .row_height(row as u32 + 1)
                             .unwrap_or(DEFAULT_ROW_HEIGHT),
                     );
@@ -969,7 +1001,7 @@ impl App {
                         .round()
                         .clamp(f32::from(MIN_ROW_HEIGHT), f32::from(MAX_ROW_HEIGHT))
                         as u16;
-                    self.sheet.set_row_height(
+                    self.sheet_mut().set_row_height(
                         row as u32 + 1,
                         (height != DEFAULT_ROW_HEIGHT).then_some(height),
                     );
@@ -993,6 +1025,86 @@ impl App {
                 self.set_status(format!("Editing {}", self.selected), true);
             }
         }
+    }
+
+    fn sheet_tabs(&mut self, ui: &mut egui::Ui) {
+        let mut selected = None;
+        let mut add = false;
+        let mut delete = false;
+        egui::Panel::bottom("sheet-tabs")
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(6, 4)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("+").on_hover_text("Add sheet").clicked() {
+                        add = true;
+                    }
+                    if ui
+                        .button("Delete")
+                        .on_hover_text("Delete active sheet")
+                        .clicked()
+                    {
+                        delete = true;
+                    }
+                    ui.separator();
+                    egui::ScrollArea::horizontal()
+                        .id_salt("sheet-tab-scroll")
+                        .show(ui, |ui| {
+                            for (index, (name, _)) in self.workbook.iter().enumerate() {
+                                ui.push_id(index, |ui| {
+                                    if ui.selectable_label(index == self.active, name).clicked() {
+                                        selected = Some(index);
+                                    }
+                                });
+                            }
+                        });
+                });
+            });
+
+        if let Some(index) = selected
+            && index != self.active
+        {
+            self.active = index;
+            self.selected = CellRef::new(1, 1);
+            self.anchor = self.selected;
+            self.sync_formula();
+            self.set_status(format!("Switched to {}", self.sheet_name()), true);
+        }
+        if add {
+            let before = self.workbook.clone();
+            let name = self.workbook.next_sheet_name();
+            self.workbook.push(name.clone(), Sheet::new());
+            self.active = self.workbook.len() - 1;
+            self.selected = CellRef::new(1, 1);
+            self.anchor = self.selected;
+            self.sync_formula();
+            self.record(before);
+            self.set_status(format!("Added {name}"), true);
+        }
+        if delete {
+            if self.workbook.len() <= 1 {
+                self.set_status("A workbook needs at least one sheet".to_string(), false);
+            } else {
+                let before = self.workbook.clone();
+                let active = self.active;
+                let removed = self.workbook.remove(active);
+                self.clamp_active();
+                self.selected = CellRef::new(1, 1);
+                self.anchor = self.selected;
+                self.sync_formula();
+                self.record(before);
+                if let Some((name, _)) = removed {
+                    self.set_status(format!("Deleted {name}"), true);
+                }
+            }
+        }
+    }
+
+    fn sheet_name(&self) -> &str {
+        self.workbook.name(self.active).unwrap_or("Sheet")
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -1021,11 +1133,12 @@ impl eframe::App for App {
         self.handle_keyboard(ui);
         self.toolbar(ui);
         self.status_bar(ui);
+        self.sheet_tabs(ui);
         self.grid(ui);
     }
 }
 
-fn demo_sheet() -> Sheet {
+fn demo_workbook() -> Workbook {
     let mut sheet = Sheet::new();
     let cells = [
         ("A1", "Item"),
@@ -1088,7 +1201,28 @@ fn demo_sheet() -> Sheet {
             ..CellFormat::default()
         },
     );
-    sheet
+    let mut notes = Sheet::new();
+    for (reference, raw) in [
+        ("A1", "Notes"),
+        ("A2", "Arrow keys move, Enter applies."),
+        ("A3", "Drag row and column headers to resize."),
+        ("A4", "Add a sheet with the + tab below."),
+    ] {
+        notes.set_a1(reference, raw).unwrap();
+    }
+    notes.set_column_width(1, Some(360));
+    notes.set_format(
+        CellRef::new(1, 1),
+        CellFormat {
+            bold: true,
+            text_color: Some(Rgb::new(226, 232, 240)),
+            fill_color: Some(Rgb::new(30, 58, 138)),
+            ..CellFormat::default()
+        },
+    );
+    let mut workbook = Workbook::from_sheet("Budget", sheet);
+    workbook.push("Notes", notes);
+    workbook
 }
 
 fn number_format_label(number_format: NumberFormat) -> &'static str {

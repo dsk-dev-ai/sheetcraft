@@ -48,7 +48,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] XLSX export preserves cell formatting
 - [x] Cell borders
 - [x] Column widths and row heights
-- [ ] Multiple sheets
+- [x] Multiple sheets
 - [ ] Sorting and filtering
 - [ ] Charts
 - [ ] Freeze panes

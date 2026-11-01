@@ -1,100 +1,139 @@
 use std::collections::HashMap;
 
 use calamine::{Data, Range, Reader, open_workbook_auto};
-use rust_xlsxwriter::{Color as XlsxColor, Format, FormatBorder, Workbook, Worksheet};
+use rust_xlsxwriter::{
+    Color as XlsxColor, Format, FormatBorder, Workbook as XlsxWorkbook, Worksheet,
+};
 
 use crate::cell::CellRef;
 use crate::engine::Sheet;
 use crate::format::{BORDER_COLOR, CellFormat};
 use crate::formula;
+use crate::workbook::Workbook;
 
 impl Sheet {
     pub fn from_xlsx(path: &str) -> Result<Self, String> {
-        let mut workbook = open_workbook_auto(path).map_err(|error| error.to_string())?;
-        let names = workbook.sheet_names().to_owned();
-        let name = names
-            .first()
-            .ok_or_else(|| "workbook has no worksheets".to_string())?;
-        let range = workbook
-            .worksheet_range(name)
-            .map_err(|error| error.to_string())?;
-        let formulas = workbook.worksheet_formula(name).unwrap_or_default();
-        let (start_row, start_column) = range.start().unwrap_or((0, 0));
-
-        let mut sheet = Self::new();
-        for (row_index, row) in range.rows().enumerate() {
-            for (column_index, data) in row.iter().enumerate() {
-                let row = start_row + row_index as u32;
-                let column = start_column + column_index as u32;
-                let imported = formula_at(&formulas, row, column)
-                    .and_then(importable_formula)
-                    .or_else(|| data_to_raw(data));
-                let Some(raw) = imported else {
-                    continue;
-                };
-                sheet.set(CellRef::new(row + 1, column + 1), raw);
-            }
-        }
-        Ok(sheet)
+        Workbook::from_xlsx(path)?
+            .sheet(0)
+            .cloned()
+            .ok_or_else(|| "workbook has no worksheets".to_string())
     }
 
     pub fn to_xlsx(&self, path: &str) -> Result<(), String> {
-        let mut workbook = Workbook::new();
+        let mut workbook = XlsxWorkbook::new();
         let worksheet = workbook.add_worksheet();
-        for (column, width) in self.column_widths() {
-            if *column == 0 || *column > 16_384 {
-                return Err("column size is outside the XLSX limit".to_string());
-            }
-            worksheet
-                .set_column_width_pixels((column - 1) as u16, u32::from(*width))
-                .map_err(|error| error.to_string())?;
-        }
-        for (row, height) in self.row_heights() {
-            if *row == 0 || *row > 1_048_576 {
-                return Err("row size is outside the XLSX limit".to_string());
-            }
-            worksheet
-                .set_row_height_pixels(row - 1, u32::from(*height))
-                .map_err(|error| error.to_string())?;
-        }
-        let mut formats: HashMap<CellFormat, Format> = HashMap::new();
-        let mut rows = 0;
-        let mut columns = 0;
-        if let Some((cell_rows, cell_columns)) = self.bounds() {
-            rows = cell_rows;
-            columns = cell_columns;
-        }
-        for (reference, _) in self.formatted_cells() {
-            rows = rows.max(reference.row);
-            columns = columns.max(reference.col);
-        }
-        if rows > 1_048_576 || columns > 16_384 {
-            return Err("sheet is larger than the XLSX limit".to_string());
-        }
-        for row in 1..=rows {
-            for column in 1..=columns {
-                let reference = CellRef::new(row, column);
-                let cell_format = self.format(&reference);
-                let format = if cell_format.is_default() {
-                    None
-                } else {
-                    Some(
-                        &*formats
-                            .entry(cell_format)
-                            .or_insert_with(|| to_xlsx_format(cell_format)),
-                    )
-                };
-                if let Some(raw) = self.raw(&reference) {
-                    write_cell(worksheet, row - 1, (column - 1) as u16, raw, format)?;
-                } else if let Some(format) = format {
-                    worksheet
-                        .write_blank(row - 1, (column - 1) as u16, format)
-                        .map_err(|error| error.to_string())?;
-                }
-            }
-        }
+        write_sheet(worksheet, self)?;
         workbook.save(path).map_err(|error| error.to_string())
     }
+}
+
+impl Workbook {
+    pub fn from_xlsx(path: &str) -> Result<Self, String> {
+        let mut xlsx = open_workbook_auto(path).map_err(|error| error.to_string())?;
+        let names = xlsx.sheet_names().to_owned();
+        if names.is_empty() {
+            return Err("workbook has no worksheets".to_string());
+        }
+        let mut workbook = Self::empty();
+        for name in names {
+            let range = xlsx
+                .worksheet_range(&name)
+                .map_err(|error| error.to_string())?;
+            let formulas = xlsx.worksheet_formula(&name).unwrap_or_default();
+            workbook.push(name, sheet_from_range(&range, &formulas));
+        }
+        Ok(workbook)
+    }
+
+    pub fn to_xlsx(&self, path: &str) -> Result<(), String> {
+        if self.is_empty() {
+            return Err("workbook has no worksheets".to_string());
+        }
+        let mut xlsx = XlsxWorkbook::new();
+        for (name, sheet) in self.iter() {
+            let worksheet = xlsx.add_worksheet();
+            worksheet
+                .set_name(name)
+                .map_err(|error| error.to_string())?;
+            write_sheet(worksheet, sheet)?;
+        }
+        xlsx.save(path).map_err(|error| error.to_string())
+    }
+}
+
+fn sheet_from_range(range: &Range<Data>, formulas: &Range<String>) -> Sheet {
+    let (start_row, start_column) = range.start().unwrap_or((0, 0));
+    let mut sheet = Sheet::new();
+    for (row_index, row) in range.rows().enumerate() {
+        for (column_index, data) in row.iter().enumerate() {
+            let row = start_row + row_index as u32;
+            let column = start_column + column_index as u32;
+            let imported = formula_at(formulas, row, column)
+                .and_then(importable_formula)
+                .or_else(|| data_to_raw(data));
+            let Some(raw) = imported else {
+                continue;
+            };
+            sheet.set(CellRef::new(row + 1, column + 1), raw);
+        }
+    }
+    sheet
+}
+
+fn write_sheet(worksheet: &mut Worksheet, sheet: &Sheet) -> Result<(), String> {
+    for (column, width) in sheet.column_widths() {
+        if *column == 0 || *column > 16_384 {
+            return Err("column size is outside the XLSX limit".to_string());
+        }
+        worksheet
+            .set_column_width_pixels((column - 1) as u16, u32::from(*width))
+            .map_err(|error| error.to_string())?;
+    }
+    for (row, height) in sheet.row_heights() {
+        if *row == 0 || *row > 1_048_576 {
+            return Err("row size is outside the XLSX limit".to_string());
+        }
+        worksheet
+            .set_row_height_pixels(row - 1, u32::from(*height))
+            .map_err(|error| error.to_string())?;
+    }
+    let mut formats: HashMap<CellFormat, Format> = HashMap::new();
+    let mut rows = 0;
+    let mut columns = 0;
+    if let Some((cell_rows, cell_columns)) = sheet.bounds() {
+        rows = cell_rows;
+        columns = cell_columns;
+    }
+    for (reference, _) in sheet.formatted_cells() {
+        rows = rows.max(reference.row);
+        columns = columns.max(reference.col);
+    }
+    if rows > 1_048_576 || columns > 16_384 {
+        return Err("sheet is larger than the XLSX limit".to_string());
+    }
+    for row in 1..=rows {
+        for column in 1..=columns {
+            let reference = CellRef::new(row, column);
+            let cell_format = sheet.format(&reference);
+            let format = if cell_format.is_default() {
+                None
+            } else {
+                Some(
+                    &*formats
+                        .entry(cell_format)
+                        .or_insert_with(|| to_xlsx_format(cell_format)),
+                )
+            };
+            if let Some(raw) = sheet.raw(&reference) {
+                write_cell(worksheet, row - 1, (column - 1) as u16, raw, format)?;
+            } else if let Some(format) = format {
+                worksheet
+                    .write_blank(row - 1, (column - 1) as u16, format)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn formula_at(formulas: &Range<String>, row: u32, column: u32) -> Option<&str> {
@@ -305,6 +344,34 @@ mod tests {
         assert_eq!(
             imported.value(&CellRef::new(2, 1)),
             CellValue::Number(2469.0)
+        );
+    }
+
+    #[test]
+    fn exports_and_reimports_multiple_sheets() {
+        let path = temp_path("multi");
+        let path_text = path.to_string_lossy().to_string();
+        let mut workbook = Workbook::new();
+        workbook.rename(0, "Budget");
+        workbook.sheet_mut(0).unwrap().set_a1("A1", "42").unwrap();
+        let mut notes = Sheet::new();
+        notes.set_a1("A1", "remember").unwrap();
+        workbook.push("Notes", notes);
+
+        workbook.to_xlsx(&path_text).unwrap();
+        let imported = Workbook::from_xlsx(&path_text).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(imported.len(), 2);
+        assert_eq!(imported.name(0), Some("Budget"));
+        assert_eq!(imported.name(1), Some("Notes"));
+        assert_eq!(
+            imported.sheet(0).unwrap().value(&CellRef::new(1, 1)),
+            CellValue::Number(42.0)
+        );
+        assert_eq!(
+            imported.sheet(1).unwrap().value(&CellRef::new(1, 1)),
+            CellValue::Text("remember".to_string())
         );
     }
 
