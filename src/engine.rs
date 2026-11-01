@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::cell::{CellError, CellRef, CellValue};
+use crate::format::CellFormat;
 use crate::formula::{self, BinaryOp, Expr, UnaryOp};
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Sheet {
     cells: BTreeMap<CellRef, String>,
+    formats: BTreeMap<CellRef, CellFormat>,
 }
 
 impl Sheet {
@@ -19,6 +21,18 @@ impl Sheet {
 
     pub fn clear(&mut self, reference: &CellRef) {
         self.cells.remove(reference);
+    }
+
+    pub fn format(&self, reference: &CellRef) -> CellFormat {
+        self.formats.get(reference).copied().unwrap_or_default()
+    }
+
+    pub fn set_format(&mut self, reference: CellRef, format: CellFormat) {
+        if format.is_default() {
+            self.formats.remove(&reference);
+        } else {
+            self.formats.insert(reference, format);
+        }
     }
 
     pub fn set_a1(
@@ -379,5 +393,26 @@ mod tests {
         let input = "\"a,b\",\"say \"\"hi\"\"\"\n\"multi\nline\",plain";
         let sheet = Sheet::from_csv(input);
         assert_eq!(sheet.to_csv(), input);
+    }
+
+    #[test]
+    fn stores_cell_formats_and_keeps_them_when_cleared() {
+        let mut sheet = Sheet::new();
+        let cell = reference("B2");
+        let format = CellFormat {
+            bold: true,
+            text_color: Some(crate::Rgb::new(248, 113, 113)),
+            fill_color: None,
+            number_format: crate::NumberFormat::Currency { decimals: 2 },
+        };
+        assert_eq!(sheet.format(&cell), CellFormat::default());
+        sheet.set(cell, "42");
+        sheet.set_format(cell, format);
+        assert_eq!(sheet.format(&cell), format);
+        sheet.clear(&cell);
+        assert_eq!(sheet.raw(&cell), None);
+        assert_eq!(sheet.format(&cell), format);
+        sheet.set_format(cell, CellFormat::default());
+        assert_eq!(sheet.format(&cell), CellFormat::default());
     }
 }
