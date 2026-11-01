@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use calamine::{Data, Range, Reader, open_workbook_auto};
-use rust_xlsxwriter::{Color as XlsxColor, Format, Workbook, Worksheet};
+use rust_xlsxwriter::{Color as XlsxColor, Format, FormatBorder, Workbook, Worksheet};
 
 use crate::cell::CellRef;
 use crate::engine::Sheet;
-use crate::format::CellFormat;
+use crate::format::{BORDER_COLOR, CellFormat};
 use crate::formula;
 
 impl Sheet {
@@ -42,27 +42,38 @@ impl Sheet {
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
         let mut formats: HashMap<CellFormat, Format> = HashMap::new();
-        if let Some((rows, columns)) = self.bounds() {
-            if rows > 1_048_576 || columns > 16_384 {
-                return Err("sheet is larger than the XLSX limit".to_string());
-            }
-            for row in 1..=rows {
-                for column in 1..=columns {
-                    let reference = CellRef::new(row, column);
-                    let Some(raw) = self.raw(&reference) else {
-                        continue;
-                    };
-                    let cell_format = self.format(&reference);
-                    let format = if cell_format.is_default() {
-                        None
-                    } else {
-                        Some(
-                            &*formats
-                                .entry(cell_format)
-                                .or_insert_with(|| to_xlsx_format(cell_format)),
-                        )
-                    };
+        let mut rows = 0;
+        let mut columns = 0;
+        if let Some((cell_rows, cell_columns)) = self.bounds() {
+            rows = cell_rows;
+            columns = cell_columns;
+        }
+        for (reference, _) in self.formatted_cells() {
+            rows = rows.max(reference.row);
+            columns = columns.max(reference.col);
+        }
+        if rows > 1_048_576 || columns > 16_384 {
+            return Err("sheet is larger than the XLSX limit".to_string());
+        }
+        for row in 1..=rows {
+            for column in 1..=columns {
+                let reference = CellRef::new(row, column);
+                let cell_format = self.format(&reference);
+                let format = if cell_format.is_default() {
+                    None
+                } else {
+                    Some(
+                        &*formats
+                            .entry(cell_format)
+                            .or_insert_with(|| to_xlsx_format(cell_format)),
+                    )
+                };
+                if let Some(raw) = self.raw(&reference) {
                     write_cell(worksheet, row - 1, (column - 1) as u16, raw, format)?;
+                } else if let Some(format) = format {
+                    worksheet
+                        .write_blank(row - 1, (column - 1) as u16, format)
+                        .map_err(|error| error.to_string())?;
                 }
             }
         }
@@ -167,6 +178,27 @@ fn to_xlsx_format(cell_format: CellFormat) -> Format {
     if let Some(number_format) = cell_format.number_format.excel_format() {
         format = format.set_num_format(number_format);
     }
+    let border_color = XlsxColor::RGB(BORDER_COLOR.to_hex());
+    if cell_format.borders.top {
+        format = format
+            .set_border_top(FormatBorder::Thin)
+            .set_border_top_color(border_color);
+    }
+    if cell_format.borders.right {
+        format = format
+            .set_border_right(FormatBorder::Thin)
+            .set_border_right_color(border_color);
+    }
+    if cell_format.borders.bottom {
+        format = format
+            .set_border_bottom(FormatBorder::Thin)
+            .set_border_bottom_color(border_color);
+    }
+    if cell_format.borders.left {
+        format = format
+            .set_border_left(FormatBorder::Thin)
+            .set_border_left_color(border_color);
+    }
     format
 }
 
@@ -174,7 +206,7 @@ fn to_xlsx_format(cell_format: CellFormat) -> Format {
 mod tests {
     use super::*;
     use crate::cell::CellValue;
-    use crate::format::{CellFormat, NumberFormat, Rgb};
+    use crate::format::{Borders, CellFormat, NumberFormat, Rgb};
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("sheetcraft-{}-{name}.xlsx", std::process::id()))
@@ -223,6 +255,15 @@ mod tests {
                 text_color: Some(Rgb::new(248, 113, 113)),
                 fill_color: Some(Rgb::new(6, 78, 59)),
                 number_format: NumberFormat::Currency { decimals: 2 },
+                borders: Borders::ALL,
+            },
+        );
+        sheet.set_format(
+            CellRef::new(3, 3),
+            CellFormat {
+                number_format: NumberFormat::Percent { decimals: 0 },
+                borders: Borders::ALL,
+                ..CellFormat::default()
             },
         );
         sheet.set_a1("A2", "=A1*2").unwrap();

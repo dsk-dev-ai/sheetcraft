@@ -1,7 +1,10 @@
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Rect, RichText, Stroke, StrokeKind, pos2, vec2,
 };
-use sheetcraft::{CellFormat, CellRef, CellValue, NumberFormat, Rgb, Sheet, formula, io};
+use sheetcraft::{
+    BORDER_COLOR, BorderPreset, Borders, CellFormat, CellRef, CellValue, NumberFormat, Rgb, Sheet,
+    formula, io,
+};
 
 const ROWS: usize = 1_000;
 const COLUMNS: usize = 26;
@@ -34,6 +37,13 @@ const FILL_COLORS: [(&str, Rgb); 4] = [
     ("Navy", Rgb::new(30, 58, 138)),
     ("Wine", Rgb::new(127, 29, 29)),
     ("Slate", Rgb::new(51, 65, 85)),
+];
+
+const BORDER_PRESETS: [BorderPreset; 4] = [
+    BorderPreset::None,
+    BorderPreset::All,
+    BorderPreset::Outer,
+    BorderPreset::Bottom,
 ];
 
 const NUMBER_FORMATS: [(NumberFormat, &str); 6] = [
@@ -293,6 +303,25 @@ impl App {
         });
     }
 
+    fn set_borders(&mut self, preset: BorderPreset) {
+        let before = self.sheet.clone();
+        let (top, left, bottom, right) = self.selection_bounds();
+        for row in top..=bottom {
+            for column in left..=right {
+                let reference = CellRef::new(row, column);
+                let mut format = self.sheet.format(&reference);
+                format.borders =
+                    preset.borders(row == top, column == left, row == bottom, column == right);
+                self.sheet.set_format(reference, format);
+            }
+        }
+        self.record(before);
+        self.set_status(
+            format!("{} {}", preset.label(), self.selection_label()),
+            true,
+        );
+    }
+
     fn move_selection(&mut self, row_delta: isize, column_delta: isize, extend: bool) {
         let row = (self.selected.row as isize + row_delta).clamp(1, ROWS as isize);
         let column = (self.selected.col as isize + column_delta).clamp(1, COLUMNS as isize);
@@ -506,6 +535,18 @@ impl App {
                         }
                     }
                     ui.separator();
+                    ui.label(RichText::new("Borders").color(MUTED));
+                    egui::ComboBox::from_id_salt("borders")
+                        .selected_text("Apply")
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            for preset in BORDER_PRESETS {
+                                if ui.selectable_label(false, preset.label()).clicked() {
+                                    self.set_borders(preset);
+                                }
+                            }
+                        });
+                    ui.separator();
                     ui.label(RichText::new("Number").color(MUTED));
                     egui::ComboBox::from_id_salt("number-format")
                         .selected_text(number_format_label(selected_format.number_format))
@@ -642,6 +683,34 @@ impl App {
                                 [pos2(rect.left() + HEADER, y), pos2(rect.right(), y)],
                                 Stroke::new(1.0, GRID_LINE),
                             );
+                        }
+
+                        for row in first_row..last_row {
+                            for column in first_column..last_column {
+                                let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
+                                let borders = sheet.format(&reference).borders;
+                                if borders.is_default() {
+                                    continue;
+                                }
+                                let min = pos2(
+                                    body_left + column as f32 * CELL_WIDTH,
+                                    body_top + row as f32 * CELL_HEIGHT,
+                                );
+                                let max = min + vec2(CELL_WIDTH, CELL_HEIGHT);
+                                let stroke = Stroke::new(1.5, color32(BORDER_COLOR));
+                                if borders.top {
+                                    painter.line_segment([min, pos2(max.x, min.y)], stroke);
+                                }
+                                if borders.right {
+                                    painter.line_segment([pos2(max.x, min.y), max], stroke);
+                                }
+                                if borders.bottom {
+                                    painter.line_segment([pos2(min.x, max.y), max], stroke);
+                                }
+                                if borders.left {
+                                    painter.line_segment([min, pos2(min.x, max.y)], stroke);
+                                }
+                            }
                         }
 
                         for reference in &references {
@@ -801,6 +870,7 @@ fn demo_sheet() -> Sheet {
         bold: true,
         text_color: Some(Rgb::new(226, 232, 240)),
         fill_color: Some(Rgb::new(30, 58, 138)),
+        borders: Borders::ALL,
         ..CellFormat::default()
     };
     for column in 1..=4 {
