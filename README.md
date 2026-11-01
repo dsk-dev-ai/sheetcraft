@@ -31,20 +31,23 @@ Early core engine. The repository currently ships:
   `SUM` / `AVERAGE` / `MIN` / `MAX`
 - Cycle detection for circular references
 - CSV import and export with quoted fields, commas, and embedded newlines
-- XLSX import of the first worksheet, preserving supported formulas
-- XLSX export with formulas, numbers, booleans, text, and cell formatting
+- XLSX import of all worksheets and their names, preserving supported formulas
+- XLSX export of multiple sheets with formulas, numbers, booleans, text, and
+  cell formatting
 - A native desktop app with a virtualized grid, formula bar with reference
   highlighting, range selection, keyboard navigation, copy and paste, and undo
   and redo
 - Number formats, bold text, text colors, cell fills, and cell borders in the
   desktop app, exported to XLSX
 - Resizable columns and rows in the desktop app, exported to XLSX
-- A small CLI for evaluating formulas, previewing files, and converting CSV to XLSX
+- Multiple sheets with tabs to add, switch, and delete sheets
+- A small CLI for evaluating formulas, previewing workbooks, and converting
+  CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
-Column widths, multiple sheets, and charts are next on the roadmap. XLSX import
-preserves values and supported formulas; visual formatting is applied in the app
-and included when exporting to XLSX.
+Sorting, filtering, and charts are next on the roadmap. XLSX import preserves
+values, sheet names, and supported formulas; visual formatting is applied in the
+app and included when exporting to XLSX.
 
 ## Download
 
@@ -73,7 +76,9 @@ selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
 fill colors, borders, and number formats to the current selection; Ctrl/Cmd+B
-toggles bold. Drag a column or row header edge to resize it.
+toggles bold. Drag a column or row header edge to resize it. Use the sheet tabs
+above the status bar to switch sheets, or add and delete sheets with the + and
+Delete buttons.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 

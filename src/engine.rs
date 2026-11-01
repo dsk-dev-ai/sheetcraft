@@ -4,7 +4,7 @@ use crate::cell::{CellError, CellRef, CellValue};
 use crate::format::CellFormat;
 use crate::formula::{self, BinaryOp, Expr, UnaryOp};
 
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sheet {
     cells: BTreeMap<CellRef, String>,
     formats: BTreeMap<CellRef, CellFormat>,

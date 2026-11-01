@@ -4,8 +4,10 @@ pub mod engine;
 pub mod format;
 pub mod formula;
 pub mod io;
+pub mod workbook;
 pub mod xlsx;
 
 pub use cell::{CellError, CellRef, CellValue};
 pub use engine::Sheet;
 pub use format::{BORDER_COLOR, BorderPreset, Borders, CellFormat, NumberFormat, Rgb};
+pub use workbook::Workbook;
