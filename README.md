@@ -43,13 +43,14 @@ Early core engine. The repository currently ships:
 - Multiple sheets with tabs to add, switch, and delete sheets
 - Row sorting and text filtering in the desktop app; filters hide rows without
   changing saved data
+- Bar and line charts from a selected range, with view-only chart windows
 - A small CLI for evaluating formulas, previewing workbooks, and converting
   CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
-Charts and freeze panes are next on the roadmap. XLSX import preserves values,
-sheet names, and supported formulas; visual formatting is applied in the app and
-included when exporting to XLSX.
+Freeze panes are next on the roadmap. XLSX import preserves values, sheet names,
+and supported formulas; visual formatting is applied in the app and included
+when exporting to XLSX. Charts and filters are view-only and are not exported.
 
 ## Download
 
@@ -79,9 +80,10 @@ down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
 fill colors, borders, and number formats to the current selection; Ctrl/Cmd+B
 toggles bold. Drag a column or row header edge to resize it. Use the Data bar
-to sort by the active column or filter rows by text; filters are view-only. Use
-the sheet tabs above the status bar to switch sheets, or add and delete sheets
-with the + and Delete buttons.
+to sort by the active column, filter rows by text, or create a chart from the
+selection; single-cell selections chart the used range. Filters and charts are
+view-only. Use the sheet tabs above the status bar to switch sheets, or add and
+delete sheets with the + and Delete buttons.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 

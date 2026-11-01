@@ -185,6 +185,296 @@ fn range_rect(
     )
 }
 
+const CHART_COLORS: [Color32; 6] = [
+    ACCENT,
+    Color32::from_rgb(96, 165, 250),
+    Color32::from_rgb(251, 191, 36),
+    Color32::from_rgb(192, 132, 252),
+    Color32::from_rgb(248, 113, 113),
+    Color32::from_rgb(45, 212, 191),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChartKind {
+    Bar,
+    Line,
+}
+
+impl ChartKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Bar",
+            Self::Line => "Line",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ChartSeriesData {
+    name: String,
+    values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ChartData {
+    categories: Vec<String>,
+    series: Vec<ChartSeriesData>,
+}
+
+#[derive(Clone)]
+struct Chart {
+    id: u64,
+    sheet: usize,
+    top: u32,
+    left: u32,
+    bottom: u32,
+    right: u32,
+    kind: ChartKind,
+}
+
+fn chart_data(sheet: &Sheet, top: u32, left: u32, bottom: u32, right: u32) -> Option<ChartData> {
+    if top == 0 || left == 0 || bottom < top || right < left {
+        return None;
+    }
+    let has_header = top < bottom
+        && (left..=right).any(|column| {
+            matches!(sheet.value(&CellRef::new(top, column)), CellValue::Text(_))
+                && (top + 1..=bottom).any(|row| {
+                    matches!(
+                        sheet.value(&CellRef::new(row, column)),
+                        CellValue::Number(_)
+                    )
+                })
+        });
+    let data_top = if has_header { top + 1 } else { top };
+    if data_top > bottom {
+        return None;
+    }
+
+    let text_categories = right > left
+        && (data_top..=bottom)
+            .any(|row| matches!(sheet.value(&CellRef::new(row, left)), CellValue::Text(_)));
+    let value_left = if text_categories { left + 1 } else { left };
+    if value_left > right {
+        return None;
+    }
+
+    let numeric_columns: Vec<u32> = (value_left..=right)
+        .filter(|column| {
+            (data_top..=bottom).any(|row| {
+                matches!(
+                    sheet.value(&CellRef::new(row, *column)),
+                    CellValue::Number(_)
+                )
+            })
+        })
+        .collect();
+    if numeric_columns.is_empty() {
+        return None;
+    }
+
+    let categories = (data_top..=bottom)
+        .map(|row| {
+            if text_categories {
+                match sheet.value(&CellRef::new(row, left)) {
+                    CellValue::Text(text) if !text.trim().is_empty() => text,
+                    CellValue::Number(value) => value.to_string(),
+                    _ => row.to_string(),
+                }
+            } else {
+                row.to_string()
+            }
+        })
+        .collect();
+
+    let series = numeric_columns
+        .into_iter()
+        .map(|column| {
+            let name = if has_header {
+                match sheet.value(&CellRef::new(top, column)) {
+                    CellValue::Text(text) if !text.trim().is_empty() => text.trim().to_string(),
+                    _ => CellRef::column_name(column),
+                }
+            } else {
+                CellRef::column_name(column)
+            };
+            let values = (data_top..=bottom)
+                .map(|row| match sheet.value(&CellRef::new(row, column)) {
+                    CellValue::Number(value) => value,
+                    CellValue::Boolean(true) => 1.0,
+                    CellValue::Boolean(false) => 0.0,
+                    _ => 0.0,
+                })
+                .collect();
+            ChartSeriesData { name, values }
+        })
+        .collect();
+
+    Some(ChartData { categories, series })
+}
+
+fn series_color(index: usize) -> Color32 {
+    CHART_COLORS[index % CHART_COLORS.len()]
+}
+
+fn axis_label(value: f64) -> String {
+    let magnitude = value.abs();
+    if magnitude >= 1_000_000.0 {
+        format!("{:.1}M", value / 1_000_000.0)
+    } else if magnitude >= 1_000.0 {
+        format!("{:.1}k", value / 1_000.0)
+    } else if magnitude >= 10.0 || value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+fn chart_range_label(chart: &Chart) -> String {
+    format!(
+        "{}:{}",
+        CellRef::new(chart.top, chart.left),
+        CellRef::new(chart.bottom, chart.right)
+    )
+}
+
+fn short_label(text: &str, limit: usize) -> String {
+    let mut characters = text.chars();
+    let mut short: String = characters.by_ref().take(limit).collect();
+    if characters.next().is_some() {
+        short.push('…');
+    }
+    short
+}
+
+fn draw_chart(ui: &mut egui::Ui, data: &ChartData, kind: ChartKind) {
+    let size = vec2(
+        ui.available_width().max(340.0),
+        ui.available_height().clamp(180.0, 320.0),
+    );
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(11, 17, 32));
+
+    let plot = Rect::from_min_max(
+        rect.min + vec2(60.0, 18.0),
+        pos2(rect.right() - 18.0, rect.bottom() - 40.0),
+    );
+    if plot.width() <= 0.0 || plot.height() <= 0.0 {
+        return;
+    }
+
+    let mut data_min = 0.0_f64;
+    let mut data_max = 0.0_f64;
+    for series in &data.series {
+        for value in &series.values {
+            data_min = data_min.min(*value);
+            data_max = data_max.max(*value);
+        }
+    }
+    let mut min = if data_min < 0.0 { data_min } else { 0.0 };
+    let mut max = if data_max > 0.0 { data_max } else { 0.0 };
+    if (max - min).abs() < 1e-9 {
+        max = min + 1.0;
+    }
+    let padding = (max - min) * 0.1;
+    if data_min < 0.0 {
+        min -= padding;
+    }
+    if data_max > 0.0 {
+        max += padding;
+    }
+    let span = (max - min).max(1e-9);
+    let y_of = |value: f64| plot.bottom() - ((value - min) / span) as f32 * plot.height();
+
+    for step in 0..=4 {
+        let value = min + span * step as f64 / 4.0;
+        let y = y_of(value);
+        painter.line_segment(
+            [pos2(plot.left(), y), pos2(plot.right(), y)],
+            Stroke::new(1.0, GRID_LINE),
+        );
+        painter.text(
+            pos2(plot.left() - 8.0, y),
+            Align2::RIGHT_CENTER,
+            axis_label(value),
+            FontId::proportional(10.0),
+            MUTED,
+        );
+    }
+
+    let baseline = y_of(0.0);
+    painter.line_segment(
+        [pos2(plot.left(), baseline), pos2(plot.right(), baseline)],
+        Stroke::new(1.5, Color32::from_rgb(71, 85, 105)),
+    );
+
+    let category_count = data.categories.len().max(1);
+    let group_width = plot.width() / category_count as f32;
+    let series_count = data.series.len().max(1);
+
+    match kind {
+        ChartKind::Bar => {
+            let group_span = (group_width * 0.78).max(1.0);
+            let bar_width = (group_span / series_count as f32).max(1.0);
+            for (category_index, _) in data.categories.iter().enumerate() {
+                for (series_index, series) in data.series.iter().enumerate() {
+                    let value = series.values.get(category_index).copied().unwrap_or(0.0);
+                    let y = y_of(value);
+                    let x = plot.left()
+                        + group_width * category_index as f32
+                        + (group_width - group_span) / 2.0
+                        + bar_width * series_index as f32;
+                    let bar = Rect::from_min_max(
+                        pos2(x + 0.5, y.min(baseline)),
+                        pos2(x + (bar_width - 0.5).max(1.0), y.max(baseline)),
+                    );
+                    painter.rect_filled(bar, 1.5, series_color(series_index));
+                }
+            }
+        }
+        ChartKind::Line => {
+            for (series_index, series) in data.series.iter().enumerate() {
+                let points: Vec<_> = series
+                    .values
+                    .iter()
+                    .enumerate()
+                    .map(|(category_index, value)| {
+                        pos2(
+                            plot.left() + group_width * (category_index as f32 + 0.5),
+                            y_of(*value),
+                        )
+                    })
+                    .collect();
+                if points.len() >= 2 {
+                    painter.add(egui::Shape::line(
+                        points.clone(),
+                        Stroke::new(2.0, series_color(series_index)),
+                    ));
+                }
+                for point in points {
+                    painter.circle_filled(point, 3.0, series_color(series_index));
+                }
+            }
+        }
+    }
+
+    let label_stride = (data.categories.len() as f32 / 12.0).ceil().max(1.0) as usize;
+    for (category_index, category) in data.categories.iter().enumerate() {
+        if category_index % label_stride != 0 {
+            continue;
+        }
+        let x = plot.left() + group_width * (category_index as f32 + 0.5);
+        painter.text(
+            pos2(x, plot.bottom() + 7.0),
+            Align2::CENTER_TOP,
+            short_label(category, 12),
+            FontId::proportional(10.0),
+            MUTED,
+        );
+    }
+}
+
 struct App {
     workbook: Workbook,
     active: usize,
@@ -201,6 +491,8 @@ struct App {
     filter_column: Option<u32>,
     filter_query: String,
     hidden_rows: BTreeSet<u32>,
+    charts: Vec<Chart>,
+    next_chart_id: u64,
 }
 
 impl App {
@@ -236,6 +528,8 @@ impl App {
             filter_column: None,
             filter_query: String::new(),
             hidden_rows: BTreeSet::new(),
+            charts: Vec::new(),
+            next_chart_id: 1,
         }
     }
 
@@ -294,8 +588,12 @@ impl App {
             self.set_status("Nothing to undo".to_string(), false);
             return;
         };
+        let previous_len = self.workbook.len();
         let current = std::mem::replace(&mut self.workbook, previous);
         self.redo.push(current);
+        if self.workbook.len() != previous_len {
+            self.charts.clear();
+        }
         self.clamp_active();
         self.sync_formula();
         self.refresh_filter();
@@ -307,8 +605,12 @@ impl App {
             self.set_status("Nothing to redo".to_string(), false);
             return;
         };
+        let previous_len = self.workbook.len();
         let current = std::mem::replace(&mut self.workbook, next);
         self.undo.push(current);
+        if self.workbook.len() != previous_len {
+            self.charts.clear();
+        }
         self.clamp_active();
         self.sync_formula();
         self.refresh_filter();
@@ -388,6 +690,7 @@ impl App {
                 self.workbook = workbook;
                 self.active = 0;
                 self.reset_filter();
+                self.charts.clear();
                 self.selected = CellRef::new(1, 1);
                 self.anchor = self.selected;
                 self.undo.clear();
@@ -528,6 +831,151 @@ impl App {
             ),
             true,
         );
+    }
+
+    fn add_chart(&mut self) {
+        let Some((rows, columns)) = self.sheet().bounds() else {
+            self.set_status("Nothing to chart".to_string(), false);
+            return;
+        };
+        let (selection_top, selection_left, selection_bottom, selection_right) =
+            self.selection_bounds();
+        let (top, left, bottom, right) =
+            if selection_top == selection_bottom && selection_left == selection_right {
+                (1, 1, rows, columns)
+            } else {
+                (
+                    selection_top,
+                    selection_left,
+                    selection_bottom,
+                    selection_right,
+                )
+            };
+        let Some(data) = chart_data(self.sheet(), top, left, bottom, right) else {
+            self.set_status(
+                "Select a range with at least one numeric column".to_string(),
+                false,
+            );
+            return;
+        };
+        let id = self.next_chart_id;
+        self.next_chart_id += 1;
+        self.charts.push(Chart {
+            id,
+            sheet: self.active,
+            top,
+            left,
+            bottom,
+            right,
+            kind: ChartKind::Bar,
+        });
+        self.set_status(
+            format!(
+                "Added chart {id} for {}:{} ({} series)",
+                CellRef::new(top, left),
+                CellRef::new(bottom, right),
+                data.series.len()
+            ),
+            true,
+        );
+    }
+
+    fn remove_charts_for_sheet(&mut self, removed: usize) {
+        self.charts.retain_mut(|chart| {
+            if chart.sheet == removed {
+                return false;
+            }
+            if chart.sheet > removed {
+                chart.sheet -= 1;
+            }
+            true
+        });
+    }
+
+    fn show_charts(&mut self, ui: &mut egui::Ui) {
+        let snapshots: Vec<_> = self
+            .charts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chart)| {
+                let sheet = self.workbook.sheet(chart.sheet)?;
+                let name = self.workbook.name(chart.sheet).unwrap_or("Sheet");
+                let title = format!("Chart {} · {name}", chart.id);
+                let data = chart_data(sheet, chart.top, chart.left, chart.bottom, chart.right);
+                Some((index, chart.clone(), title, data))
+            })
+            .collect();
+        let mut close = None;
+        let mut kind_change = None;
+        for (index, chart, title, data) in snapshots {
+            let mut open = true;
+            let mut kind = chart.kind;
+            let offset = (chart.id.saturating_sub(1) % 5) as f32 * 28.0;
+            egui::Window::new(title)
+                .id(egui::Id::unique(("chart", chart.id)))
+                .default_pos(pos2(240.0 + offset, 120.0 + offset))
+                .default_width(640.0)
+                .default_height(390.0)
+                .min_width(360.0)
+                .min_height(300.0)
+                .resizable(true)
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(chart_range_label(&chart))
+                                .size(12.0)
+                                .color(MUTED),
+                        );
+                        ui.separator();
+                        for candidate in [ChartKind::Bar, ChartKind::Line] {
+                            if ui
+                                .selectable_label(kind == candidate, candidate.label())
+                                .clicked()
+                            {
+                                kind = candidate;
+                            }
+                        }
+                    });
+                    match &data {
+                        Some(data) => {
+                            ui.horizontal_wrapped(|ui| {
+                                for (series_index, series) in data.series.iter().enumerate() {
+                                    ui.label(
+                                        RichText::new("■")
+                                            .size(11.0)
+                                            .color(series_color(series_index)),
+                                    );
+                                    ui.label(
+                                        RichText::new(short_label(&series.name, 18))
+                                            .size(11.0)
+                                            .color(MUTED),
+                                    );
+                                }
+                            });
+                            draw_chart(ui, data, kind);
+                        }
+                        None => {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("No numeric data in this range").color(ERROR));
+                        }
+                    }
+                });
+            if !open {
+                close = Some(index);
+            }
+            if kind != chart.kind {
+                kind_change = Some((index, kind));
+            }
+        }
+        if let Some((index, kind)) = kind_change
+            && let Some(chart) = self.charts.get_mut(index)
+        {
+            chart.kind = kind;
+        }
+        if let Some(index) = close {
+            self.charts.remove(index);
+        }
     }
 
     fn reset_filter(&mut self) {
@@ -854,6 +1302,13 @@ impl App {
                         .clicked()
                     {
                         self.sort_active(false);
+                    }
+                    if ui
+                        .button("Chart")
+                        .on_hover_text("Create a chart from the selection or used range")
+                        .clicked()
+                    {
+                        self.add_chart();
                     }
                     ui.separator();
                     let filter_column = self.filter_column.unwrap_or(self.selected.col);
@@ -1299,6 +1754,7 @@ impl App {
                 let before = self.workbook.clone();
                 let active = self.active;
                 let removed = self.workbook.remove(active);
+                self.remove_charts_for_sheet(active);
                 self.clamp_active();
                 self.reset_filter();
                 self.selected = CellRef::new(1, 1);
@@ -1344,6 +1800,7 @@ impl eframe::App for App {
         self.status_bar(ui);
         self.sheet_tabs(ui);
         self.grid(ui);
+        self.show_charts(ui);
     }
 }
 
@@ -1517,7 +1974,59 @@ mod tests {
             filter_column: None,
             filter_query: String::new(),
             hidden_rows: BTreeSet::new(),
+            charts: Vec::new(),
+            next_chart_id: 1,
         }
+    }
+
+    #[test]
+    fn chart_data_uses_headers_categories_and_formulas() {
+        let workbook = demo_workbook();
+        let data = chart_data(workbook.sheet(0).unwrap(), 1, 1, 5, 4).unwrap();
+        assert_eq!(data.categories, ["Keyboard", "Monitor", "Dock", "Total"]);
+        assert_eq!(
+            data.series
+                .iter()
+                .map(|series| series.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Cost", "Qty", "Total"]
+        );
+        assert_eq!(data.series[0].values, [79.0, 249.0, 129.0, 0.0]);
+        assert_eq!(data.series[2].values, [158.0, 249.0, 129.0, 536.0]);
+    }
+
+    #[test]
+    fn chart_data_handles_ranges_without_headers() {
+        let mut sheet = Sheet::new();
+        for (reference, raw) in [("A1", "Alpha"), ("B1", "10"), ("A2", "Beta"), ("B2", "20")] {
+            sheet.set_a1(reference, raw).unwrap();
+        }
+        let data = chart_data(&sheet, 1, 1, 2, 2).unwrap();
+        assert_eq!(data.categories, ["Alpha", "Beta"]);
+        assert_eq!(data.series.len(), 1);
+        assert_eq!(data.series[0].name, "B");
+        assert_eq!(data.series[0].values, [10.0, 20.0]);
+        assert!(chart_data(&sheet, 1, 1, 2, 1).is_none());
+    }
+
+    #[test]
+    fn charts_are_created_from_the_used_range_and_removed_with_their_sheet() {
+        let mut app = test_app();
+        app.add_chart();
+        assert_eq!(app.charts.len(), 1);
+        assert_eq!(app.charts[0].sheet, 0);
+        assert_eq!(
+            (
+                app.charts[0].top,
+                app.charts[0].left,
+                app.charts[0].bottom,
+                app.charts[0].right
+            ),
+            (1, 1, 5, 4)
+        );
+        assert_eq!(app.charts[0].kind, ChartKind::Bar);
+        app.remove_charts_for_sheet(0);
+        assert!(app.charts.is_empty());
     }
 
     #[test]
