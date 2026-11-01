@@ -103,6 +103,61 @@ pub fn references(formula: &str) -> Vec<Reference> {
     references
 }
 
+/// Shift references whose rows fall inside a sorted block.
+///
+/// Formulas that cannot be parsed are returned unchanged. References outside
+/// the block stay fixed, matching rows moving inside the selected range.
+pub fn translate_rows(input: &str, top: u32, bottom: u32, delta: isize) -> String {
+    let Some(body) = input.strip_prefix('=') else {
+        return input.to_string();
+    };
+    let Ok(expr) = parse(body) else {
+        return input.to_string();
+    };
+    if !is_supported(&expr) {
+        return input.to_string();
+    }
+
+    let chars: Vec<char> = body.chars().collect();
+    let mut output = String::from("=");
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let start = index;
+            index += 1;
+            while index < chars.len()
+                && (chars[index].is_ascii_alphanumeric()
+                    || chars[index] == '_'
+                    || chars[index] == '.')
+            {
+                index += 1;
+            }
+            let token: String = chars[start..index].iter().collect();
+            let mut after = index;
+            while after < chars.len() && chars[after].is_whitespace() {
+                after += 1;
+            }
+            let is_call = after < chars.len() && chars[after] == '(';
+            if !is_call
+                && let Ok(reference) = CellRef::parse(&token)
+                && (top..=bottom).contains(&reference.row)
+            {
+                let row = reference.row as isize + delta;
+                if (1..=1_048_576).contains(&row) {
+                    output.push_str(&CellRef::new(row as u32, reference.col).to_string());
+                    continue;
+                }
+            }
+            output.push_str(&token);
+        } else {
+            output.push(ch);
+            index += 1;
+        }
+    }
+    output
+}
+
 fn collect_references(expr: &Expr, references: &mut Vec<Reference>) {
     match expr {
         Expr::Number(_) => {}
@@ -427,5 +482,13 @@ mod tests {
     fn ignores_text_and_invalid_formulas() {
         assert!(references("A1").is_empty());
         assert!(references("=SUM(A1").is_empty());
+    }
+
+    #[test]
+    fn translates_references_inside_sorted_rows() {
+        assert_eq!(translate_rows("=B2*C2", 2, 4, 3), "=B5*C5");
+        assert_eq!(translate_rows("=SUM(B1:B2)+B3", 2, 4, 1), "=SUM(B1:B3)+B4");
+        assert_eq!(translate_rows("=$B$2*C2", 2, 4, 3), "=$B$2*C2");
+        assert_eq!(translate_rows("=SUM(A1:A3)", 2, 4, 1), "=SUM(A1:A4)");
     }
 }

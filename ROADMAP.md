@@ -49,7 +49,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Cell borders
 - [x] Column widths and row heights
 - [x] Multiple sheets
-- [ ] Sorting and filtering
+- [x] Sorting and filtering
 - [ ] Charts
 - [ ] Freeze panes
 

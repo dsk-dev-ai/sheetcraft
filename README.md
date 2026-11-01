@@ -41,13 +41,15 @@ Early core engine. The repository currently ships:
   desktop app, exported to XLSX
 - Resizable columns and rows in the desktop app, exported to XLSX
 - Multiple sheets with tabs to add, switch, and delete sheets
+- Row sorting and text filtering in the desktop app; filters hide rows without
+  changing saved data
 - A small CLI for evaluating formulas, previewing workbooks, and converting
   CSV to XLSX
 - Unit tests for parsing, evaluation, and file round trips
 
-Sorting, filtering, and charts are next on the roadmap. XLSX import preserves
-values, sheet names, and supported formulas; visual formatting is applied in the
-app and included when exporting to XLSX.
+Charts and freeze panes are next on the roadmap. XLSX import preserves values,
+sheet names, and supported formulas; visual formatting is applied in the app and
+included when exporting to XLSX.
 
 ## Download
 
@@ -76,9 +78,10 @@ selection, Shift+arrows or Shift+click selects a range, Enter applies and moves
 down, Escape cancels, Delete clears the selection, and Ctrl/Cmd+C, V, Z, and
 Shift+Z copy, paste, undo, and redo. The formatting bar applies bold, text and
 fill colors, borders, and number formats to the current selection; Ctrl/Cmd+B
-toggles bold. Drag a column or row header edge to resize it. Use the sheet tabs
-above the status bar to switch sheets, or add and delete sheets with the + and
-Delete buttons.
+toggles bold. Drag a column or row header edge to resize it. Use the Data bar
+to sort by the active column or filter rows by text; filters are view-only. Use
+the sheet tabs above the status bar to switch sheets, or add and delete sheets
+with the + and Delete buttons.
 
 ![SheetCraft desktop app](assets/screenshot.png)
 

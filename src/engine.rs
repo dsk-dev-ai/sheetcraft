@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::cell::{CellError, CellRef, CellValue};
 use crate::format::CellFormat;
@@ -150,6 +151,121 @@ impl Sheet {
         } else {
             Some((rows, columns))
         }
+    }
+
+    pub fn sort_rows(
+        &mut self,
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        key_column: u32,
+        ascending: bool,
+    ) -> Result<(), String> {
+        if top == 0
+            || left == 0
+            || top > bottom
+            || left > right
+            || bottom > 1_048_576
+            || right > 16_384
+        {
+            return Err("sort range is outside the sheet limits".to_string());
+        }
+        if !(left..=right).contains(&key_column) {
+            return Err("sort column is outside the selected range".to_string());
+        }
+
+        let rows: Vec<SortRow> = (top..=bottom)
+            .map(|row| {
+                let cells = (left..=right)
+                    .filter_map(|column| {
+                        let reference = CellRef::new(row, column);
+                        self.raw(&reference).map(|raw| (column, raw.to_string()))
+                    })
+                    .collect();
+                let formats = (left..=right)
+                    .filter_map(|column| {
+                        let reference = CellRef::new(row, column);
+                        let format = self.format(&reference);
+                        (!format.is_default()).then_some((column, format))
+                    })
+                    .collect();
+                SortRow {
+                    key: self.value(&CellRef::new(row, key_column)),
+                    blank: self.raw(&CellRef::new(row, key_column)).is_none(),
+                    height: self.row_height(row),
+                    cells,
+                    formats,
+                }
+            })
+            .collect();
+
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        order.sort_by(|&left_index, &right_index| {
+            let left = &rows[left_index];
+            let right = &rows[right_index];
+            let ordering = match (left.blank, right.blank) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => {
+                    let ordering = compare_values(&left.key, &right.key);
+                    if ascending {
+                        ordering
+                    } else {
+                        ordering.reverse()
+                    }
+                }
+            };
+            ordering.then_with(|| left_index.cmp(&right_index))
+        });
+
+        for row in top..=bottom {
+            for column in left..=right {
+                let reference = CellRef::new(row, column);
+                self.cells.remove(&reference);
+                self.formats.remove(&reference);
+            }
+            self.row_heights.remove(&row);
+        }
+
+        for (offset, source_index) in order.into_iter().enumerate() {
+            let destination = top + offset as u32;
+            let source = top + source_index as u32;
+            let delta = destination as isize - source as isize;
+            let row = &rows[source_index];
+            for (column, raw) in &row.cells {
+                let raw = if raw.starts_with('=') {
+                    formula::translate_rows(raw, top, bottom, delta)
+                } else {
+                    raw.clone()
+                };
+                self.cells.insert(CellRef::new(destination, *column), raw);
+            }
+            for (column, format) in &row.formats {
+                self.formats
+                    .insert(CellRef::new(destination, *column), *format);
+            }
+            if let Some(height) = row.height {
+                self.row_heights.insert(destination, height);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn filter_rows(&self, top: u32, bottom: u32, column: u32, query: &str) -> BTreeSet<u32> {
+        let mut matching = BTreeSet::new();
+        let query = query.trim().to_lowercase();
+        if top == 0 || column == 0 || bottom < top {
+            return matching;
+        }
+        for row in top..=bottom {
+            let value = self.value(&CellRef::new(row, column)).to_string();
+            if query.is_empty() || value.to_lowercase().contains(&query) {
+                matching.insert(row);
+            }
+        }
+        matching
     }
 
     fn eval_ref(&self, reference: &CellRef, visiting: &mut HashSet<CellRef>) -> CellValue {
@@ -320,6 +436,37 @@ fn parse_literal(raw: &str) -> CellValue {
     CellValue::Text(raw.to_string())
 }
 
+struct SortRow {
+    cells: Vec<(u32, String)>,
+    formats: Vec<(u32, CellFormat)>,
+    height: Option<u16>,
+    key: CellValue,
+    blank: bool,
+}
+
+fn compare_values(left: &CellValue, right: &CellValue) -> Ordering {
+    let rank = |value: &CellValue| match value {
+        CellValue::Number(_) => 0,
+        CellValue::Text(_) => 1,
+        CellValue::Boolean(_) => 2,
+        CellValue::Error(_) => 3,
+        CellValue::Empty => 4,
+    };
+    match (left, right) {
+        (CellValue::Number(left), CellValue::Number(right)) => {
+            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        (CellValue::Text(left), CellValue::Text(right)) => {
+            left.to_lowercase().cmp(&right.to_lowercase())
+        }
+        (CellValue::Boolean(left), CellValue::Boolean(right)) => left.cmp(right),
+        (CellValue::Error(left), CellValue::Error(right)) => {
+            left.to_string().cmp(&right.to_string())
+        }
+        _ => rank(left).cmp(&rank(right)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +623,71 @@ mod tests {
         sheet.set_row_height(3, None);
         assert_eq!(sheet.column_width(2), None);
         assert_eq!(sheet.row_height(3), None);
+    }
+
+    #[test]
+    fn sorts_rows_with_formulas_formats_and_heights() {
+        let mut sheet = Sheet::new();
+        for (reference, raw) in [
+            ("A2", "pear"),
+            ("B2", "30"),
+            ("C2", "=B2*2"),
+            ("A3", "apple"),
+            ("B3", "10"),
+            ("C3", "=B3*2"),
+            ("A4", "fig"),
+            ("B4", "20"),
+            ("C4", "=B4*2"),
+        ] {
+            sheet.set_a1(reference, raw).unwrap();
+        }
+        let format = CellFormat {
+            bold: true,
+            ..CellFormat::default()
+        };
+        sheet.set_format(reference("A3"), format);
+        sheet.set_row_height(3, Some(36));
+
+        sheet.sort_rows(2, 1, 4, 3, 2, true).unwrap();
+
+        assert_eq!(sheet.raw(&reference("A2")), Some("apple"));
+        assert_eq!(sheet.raw(&reference("A3")), Some("fig"));
+        assert_eq!(sheet.raw(&reference("A4")), Some("pear"));
+        assert_eq!(sheet.raw(&reference("C2")), Some("=B2*2"));
+        assert_eq!(sheet.raw(&reference("C3")), Some("=B3*2"));
+        assert_eq!(sheet.raw(&reference("C4")), Some("=B4*2"));
+        assert_eq!(sheet.format(&reference("A2")), format);
+        assert_eq!(sheet.row_height(2), Some(36));
+        assert_eq!(sheet.row_height(3), None);
+    }
+
+    #[test]
+    fn keeps_blank_rows_last_in_both_directions() {
+        for ascending in [true, false] {
+            let mut sheet = Sheet::new();
+            sheet.set_a1("A1", "2").unwrap();
+            sheet.set_a1("A3", "1").unwrap();
+            sheet.sort_rows(1, 1, 3, 1, 1, ascending).unwrap();
+            assert_eq!(
+                sheet.raw(&reference("A2")),
+                Some(if ascending { "2" } else { "1" })
+            );
+            assert_eq!(sheet.raw(&reference("A3")), None);
+        }
+    }
+
+    #[test]
+    fn filters_rows_case_insensitively() {
+        let mut sheet = Sheet::new();
+        for (reference, raw) in [
+            ("A1", "Name"),
+            ("A2", "Apple"),
+            ("A3", "Fig"),
+            ("A4", "Pineapple"),
+        ] {
+            sheet.set_a1(reference, raw).unwrap();
+        }
+        assert_eq!(sheet.filter_rows(2, 4, 1, "APP"), BTreeSet::from([2, 4]));
+        assert_eq!(sheet.filter_rows(2, 4, 1, " "), BTreeSet::from([2, 3, 4]));
     }
 }
