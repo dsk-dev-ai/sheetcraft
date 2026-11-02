@@ -81,6 +81,13 @@ fn sheet_from_range(range: &Range<Data>, formulas: &Range<String>) -> Sheet {
 }
 
 fn write_sheet(worksheet: &mut Worksheet, sheet: &Sheet) -> Result<(), String> {
+    if let Some((rows, columns)) = sheet.freeze_panes() {
+        let columns = u16::try_from(columns)
+            .map_err(|_| "frozen column is outside the XLSX limit".to_string())?;
+        worksheet
+            .set_freeze_panes(rows, columns)
+            .map_err(|error| error.to_string())?;
+    }
     for (column, width) in sheet.column_widths() {
         if *column == 0 || *column > 16_384 {
             return Err("column size is outside the XLSX limit".to_string());
@@ -323,6 +330,7 @@ mod tests {
         );
         sheet.set_column_width(1, Some(160));
         sheet.set_row_height(1, Some(32));
+        sheet.set_freeze_panes(2, 1);
         sheet.set_a1("A2", "=A1*2").unwrap();
         sheet.set_format(
             CellRef::new(2, 1),
