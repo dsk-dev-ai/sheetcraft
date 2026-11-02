@@ -152,39 +152,6 @@ fn last_visible(offsets: &[f32], position: f32) -> usize {
     offsets.partition_point(|offset| *offset < position)
 }
 
-fn cell_rect(metrics: &GridMetrics, origin: egui::Pos2, row: usize, column: usize) -> Rect {
-    Rect::from_min_max(
-        pos2(
-            origin.x + metrics.column_offsets[column],
-            origin.y + metrics.row_offsets[row],
-        ),
-        pos2(
-            origin.x + metrics.column_offsets[column + 1],
-            origin.y + metrics.row_offsets[row + 1],
-        ),
-    )
-}
-
-fn range_rect(
-    metrics: &GridMetrics,
-    origin: egui::Pos2,
-    top: usize,
-    left: usize,
-    bottom: usize,
-    right: usize,
-) -> Rect {
-    Rect::from_min_max(
-        pos2(
-            origin.x + metrics.column_offsets[left],
-            origin.y + metrics.row_offsets[top],
-        ),
-        pos2(
-            origin.x + metrics.column_offsets[right + 1],
-            origin.y + metrics.row_offsets[bottom + 1],
-        ),
-    )
-}
-
 const CHART_COLORS: [Color32; 6] = [
     ACCENT,
     Color32::from_rgb(96, 165, 250),
@@ -833,6 +800,34 @@ impl App {
         );
     }
 
+    fn toggle_freeze(&mut self) {
+        let before = self.workbook.clone();
+        if self.sheet().freeze_panes().is_some() {
+            self.sheet_mut().set_freeze_panes(0, 0);
+            self.record(before);
+            self.set_status("Unfroze panes".to_string(), true);
+            return;
+        }
+        let rows = self.selected.row.saturating_sub(1);
+        let columns = self.selected.col.saturating_sub(1);
+        if rows == 0 && columns == 0 {
+            self.set_status(
+                "Move below or right of A1 to freeze rows or columns".to_string(),
+                false,
+            );
+            return;
+        }
+        self.sheet_mut().set_freeze_panes(rows, columns);
+        self.record(before);
+        self.set_status(
+            format!(
+                "Froze {rows} rows and {columns} columns at {}",
+                self.selected
+            ),
+            true,
+        );
+    }
+
     fn add_chart(&mut self) {
         let Some((rows, columns)) = self.sheet().bounds() else {
             self.set_status("Nothing to chart".to_string(), false);
@@ -1310,6 +1305,25 @@ impl App {
                     {
                         self.add_chart();
                     }
+                    let frozen = self.sheet().freeze_panes();
+                    if ui
+                        .button(if frozen.is_some() {
+                            "Unfreeze"
+                        } else {
+                            "Freeze"
+                        })
+                        .on_hover_text("Freeze rows above and columns left of the active cell")
+                        .clicked()
+                    {
+                        self.toggle_freeze();
+                    }
+                    if let Some((rows, columns)) = frozen {
+                        ui.label(
+                            RichText::new(format!("{rows}x{columns}"))
+                                .size(11.0)
+                                .color(ACCENT),
+                        );
+                    }
                     ui.separator();
                     let filter_column = self.filter_column.unwrap_or(self.selected.col);
                     ui.label(format!("Filter {}", CellRef::column_name(filter_column)));
@@ -1345,6 +1359,12 @@ impl App {
         let selected = self.selected;
         let (top, left, bottom, right) = self.selection_bounds();
         let references = formula::references(&self.formula);
+        let (frozen_rows, frozen_columns) = sheet
+            .freeze_panes()
+            .map(|(rows, columns)| (rows as usize, columns as usize))
+            .unwrap_or((0, 0));
+        let frozen_rows = frozen_rows.min(ROWS - 1);
+        let frozen_columns = frozen_columns.min(COLUMNS - 1);
         let mut clicked = None;
         let mut edit_requested = false;
         let mut resize_started = false;
@@ -1367,197 +1387,354 @@ impl App {
                         painter.rect_filled(rect, 0.0, BACKGROUND);
 
                         let clip = ui.clip_rect().intersect(rect);
-                        let body_left = rect.left() + HEADER;
-                        let body_top = rect.top() + HEADER;
-                        let body_origin = pos2(body_left, body_top);
+                        let anchor = vec2(
+                            (clip.left() - rect.left()).max(0.0),
+                            (clip.top() - rect.top()).max(0.0),
+                        );
+                        let visible_width = (clip.width() - HEADER).max(0.0);
+                        let visible_height = (clip.height() - HEADER).max(0.0);
+                        let frozen_width = metrics.column_offsets[frozen_columns];
+                        let frozen_height = metrics.row_offsets[frozen_rows];
 
-                        let first_row = first_visible(&metrics.row_offsets, clip.top() - body_top)
-                            .min(ROWS - 1);
-                        let last_row = last_visible(&metrics.row_offsets, clip.bottom() - body_top)
-                            .clamp(first_row + 1, ROWS);
+                        let column_x = |column: usize| {
+                            rect.left()
+                                + if column < frozen_columns {
+                                    anchor.x + HEADER + metrics.column_offsets[column]
+                                } else {
+                                    HEADER + metrics.column_offsets[column]
+                                }
+                        };
+                        let row_y = |row: usize| {
+                            rect.top()
+                                + if row < frozen_rows {
+                                    anchor.y + HEADER + metrics.row_offsets[row]
+                                } else {
+                                    HEADER + metrics.row_offsets[row]
+                                }
+                        };
+
+                        let frozen_row_end =
+                            last_visible(&metrics.row_offsets, visible_height.min(frozen_height))
+                                .min(frozen_rows);
+                        let frozen_column_end =
+                            last_visible(&metrics.column_offsets, visible_width.min(frozen_width))
+                                .min(frozen_columns);
+                        let first_row =
+                            first_visible(&metrics.row_offsets, anchor.y + frozen_height)
+                                .clamp(frozen_rows, ROWS - 1);
+                        let last_row =
+                            last_visible(&metrics.row_offsets, anchor.y + visible_height)
+                                .clamp(first_row + 1, ROWS);
                         let first_column =
-                            first_visible(&metrics.column_offsets, clip.left() - body_left)
-                                .min(COLUMNS - 1);
+                            first_visible(&metrics.column_offsets, anchor.x + frozen_width)
+                                .clamp(frozen_columns, COLUMNS - 1);
                         let last_column =
-                            last_visible(&metrics.column_offsets, clip.right() - body_left)
+                            last_visible(&metrics.column_offsets, anchor.x + visible_width)
                                 .clamp(first_column + 1, COLUMNS);
 
-                        painter.rect_filled(
-                            Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + HEADER)),
-                            0.0,
-                            HEADER_FILL,
+                        let frozen_rows_visible: Vec<usize> = (0..frozen_row_end)
+                            .filter(|row| !metrics.is_hidden(*row))
+                            .collect();
+                        let frozen_columns_visible: Vec<usize> = (0..frozen_column_end).collect();
+                        let rows_visible: Vec<usize> = (first_row..last_row)
+                            .filter(|row| !metrics.is_hidden(*row))
+                            .collect();
+                        let columns_visible: Vec<usize> = (first_column..last_column).collect();
+
+                        let header_left = clip.left() + HEADER;
+                        let header_top = clip.top() + HEADER;
+                        let body_pane = Rect::from_min_max(
+                            pos2(header_left + frozen_width, header_top + frozen_height),
+                            clip.max,
                         );
-                        painter.rect_filled(
-                            Rect::from_min_max(rect.min, pos2(rect.left() + HEADER, rect.bottom())),
-                            0.0,
-                            HEADER_FILL,
+                        let top_pane = Rect::from_min_max(
+                            pos2(header_left + frozen_width, header_top),
+                            pos2(clip.right(), header_top + frozen_height),
+                        );
+                        let corner_pane = Rect::from_min_max(
+                            pos2(header_left, header_top),
+                            pos2(header_left + frozen_width, header_top + frozen_height),
+                        );
+                        let left_pane = Rect::from_min_max(
+                            pos2(header_left, header_top + frozen_height),
+                            pos2(header_left + frozen_width, clip.bottom()),
                         );
 
-                        for column in first_column..last_column {
-                            let x = body_left + metrics.column_offsets[column];
-                            let width = metrics.column_width(column);
-                            painter.text(
-                                pos2(x + width / 2.0, rect.top() + HEADER / 2.0),
-                                Align2::CENTER_CENTER,
-                                CellRef::column_name(column as u32 + 1),
-                                FontId::proportional(12.0),
-                                MUTED,
-                            );
-                        }
-                        for row in first_row..last_row {
-                            if metrics.is_hidden(row) {
-                                continue;
-                            }
-                            let y = body_top + metrics.row_offsets[row];
-                            let height = metrics.row_height(row);
-                            painter.text(
-                                pos2(rect.left() + HEADER / 2.0, y + height / 2.0),
-                                Align2::CENTER_CENTER,
-                                (row + 1).to_string(),
-                                FontId::proportional(12.0),
-                                MUTED,
-                            );
-                        }
-
-                        for row in first_row..last_row {
-                            if metrics.is_hidden(row) {
-                                continue;
-                            }
-                            for column in first_column..last_column {
-                                let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
-                                let format = sheet.format(&reference);
-                                let cell = cell_rect(&metrics, body_origin, row, column);
-                                if let Some(fill) = format.fill_color {
-                                    painter.rect_filled(cell, 0.0, color32(fill));
+                        let paint_region =
+                            |rows: &[usize],
+                             columns: &[usize],
+                             pane: Rect,
+                             painter: &egui::Painter| {
+                                let pane = pane.intersect(clip);
+                                if pane.width() <= 0.0 || pane.height() <= 0.0 {
+                                    return;
                                 }
-                                let value = sheet.value(&reference);
-                                let text = display_value(&value, format.number_format);
-                                if text.is_empty() {
-                                    continue;
+                                let region = painter.with_clip_rect(pane);
+                                for row in rows {
+                                    for column in columns {
+                                        let reference =
+                                            CellRef::new(*row as u32 + 1, *column as u32 + 1);
+                                        let format = sheet.format(&reference);
+                                        let cell = Rect::from_min_max(
+                                            pos2(column_x(*column), row_y(*row)),
+                                            pos2(column_x(*column + 1), row_y(*row + 1)),
+                                        );
+                                        if let Some(fill) = format.fill_color {
+                                            region.rect_filled(cell, 0.0, color32(fill));
+                                        }
+                                        let value = sheet.value(&reference);
+                                        let text = display_value(&value, format.number_format);
+                                        if !text.is_empty() {
+                                            let color =
+                                                format.text_color.map(color32).unwrap_or_else(
+                                                    || if value.is_error() { ERROR } else { TEXT },
+                                                );
+                                            draw_text(
+                                                &region,
+                                                cell.min + vec2(6.0, 4.0),
+                                                &text,
+                                                color,
+                                                format.bold,
+                                            );
+                                        }
+                                    }
                                 }
-                                let color = format
-                                    .text_color
-                                    .map(color32)
-                                    .unwrap_or_else(|| if value.is_error() { ERROR } else { TEXT });
-                                let position = cell.min + vec2(6.0, 4.0);
-                                draw_text(&painter, position, &text, color, format.bold);
-                            }
-                        }
-
-                        for column in first_column..=last_column {
-                            let x = body_left + metrics.column_offsets[column];
-                            painter.line_segment(
-                                [pos2(x, rect.top() + HEADER), pos2(x, rect.bottom())],
-                                Stroke::new(1.0, GRID_LINE),
-                            );
-                        }
-                        for row in first_row..=last_row {
-                            if metrics.is_hidden(row) {
-                                continue;
-                            }
-                            let y = body_top + metrics.row_offsets[row];
-                            painter.line_segment(
-                                [pos2(rect.left() + HEADER, y), pos2(rect.right(), y)],
-                                Stroke::new(1.0, GRID_LINE),
-                            );
-                        }
-
-                        for row in first_row..last_row {
-                            if metrics.is_hidden(row) {
-                                continue;
-                            }
-                            for column in first_column..last_column {
-                                let reference = CellRef::new(row as u32 + 1, column as u32 + 1);
-                                let borders = sheet.format(&reference).borders;
-                                if borders.is_default() {
-                                    continue;
+                                for column in columns {
+                                    let left = column_x(*column);
+                                    let right = column_x(*column + 1);
+                                    let stroke = Stroke::new(1.0, GRID_LINE);
+                                    region.line_segment(
+                                        [pos2(left, pane.top()), pos2(left, pane.bottom())],
+                                        stroke,
+                                    );
+                                    region.line_segment(
+                                        [pos2(right, pane.top()), pos2(right, pane.bottom())],
+                                        stroke,
+                                    );
                                 }
-                                let cell = cell_rect(&metrics, body_origin, row, column);
-                                let min = cell.min;
-                                let max = cell.max;
-                                let stroke = Stroke::new(1.5, color32(BORDER_COLOR));
-                                if borders.top {
-                                    painter.line_segment([min, pos2(max.x, min.y)], stroke);
+                                for row in rows {
+                                    let top = row_y(*row);
+                                    let bottom = row_y(*row + 1);
+                                    let stroke = Stroke::new(1.0, GRID_LINE);
+                                    region.line_segment(
+                                        [pos2(pane.left(), top), pos2(pane.right(), top)],
+                                        stroke,
+                                    );
+                                    region.line_segment(
+                                        [pos2(pane.left(), bottom), pos2(pane.right(), bottom)],
+                                        stroke,
+                                    );
                                 }
-                                if borders.right {
-                                    painter.line_segment([pos2(max.x, min.y), max], stroke);
+                                for row in rows {
+                                    for column in columns {
+                                        let reference =
+                                            CellRef::new(*row as u32 + 1, *column as u32 + 1);
+                                        let borders = sheet.format(&reference).borders;
+                                        if borders.is_default() {
+                                            continue;
+                                        }
+                                        let cell = Rect::from_min_max(
+                                            pos2(column_x(*column), row_y(*row)),
+                                            pos2(column_x(*column + 1), row_y(*row + 1)),
+                                        );
+                                        let min = cell.min;
+                                        let max = cell.max;
+                                        let stroke = Stroke::new(1.5, color32(BORDER_COLOR));
+                                        if borders.top {
+                                            region.line_segment([min, pos2(max.x, min.y)], stroke);
+                                        }
+                                        if borders.right {
+                                            region.line_segment([pos2(max.x, min.y), max], stroke);
+                                        }
+                                        if borders.bottom {
+                                            region.line_segment([pos2(min.x, max.y), max], stroke);
+                                        }
+                                        if borders.left {
+                                            region.line_segment([min, pos2(min.x, max.y)], stroke);
+                                        }
+                                    }
                                 }
-                                if borders.bottom {
-                                    painter.line_segment([pos2(min.x, max.y), max], stroke);
-                                }
-                                if borders.left {
-                                    painter.line_segment([min, pos2(min.x, max.y)], stroke);
-                                }
-                            }
-                        }
-
-                        for reference in &references {
-                            let (start, end) = match *reference {
-                                formula::Reference::Cell(reference) => (reference, reference),
-                                formula::Reference::Range(start, end) => (start, end),
                             };
-                            let top = start.row.min(end.row) as usize;
-                            let bottom = start.row.max(end.row) as usize;
-                            let left = start.col.min(end.col) as usize;
-                            let right = start.col.max(end.col) as usize;
-                            if top > ROWS || left > COLUMNS {
+
+                        let paint_overlays = |pane: Rect, painter: &egui::Painter| {
+                            let pane = pane.intersect(clip);
+                            if pane.width() <= 0.0 || pane.height() <= 0.0 {
+                                return;
+                            }
+                            let region = painter.with_clip_rect(pane);
+                            for reference in &references {
+                                let (start, end) = match *reference {
+                                    formula::Reference::Cell(reference) => (reference, reference),
+                                    formula::Reference::Range(start, end) => (start, end),
+                                };
+                                let top = start.row.min(end.row) as usize;
+                                let bottom = start.row.max(end.row) as usize;
+                                let left = start.col.min(end.col) as usize;
+                                let right = start.col.max(end.col) as usize;
+                                if top > ROWS || left > COLUMNS {
+                                    continue;
+                                }
+                                let cell = Rect::from_min_max(
+                                    pos2(
+                                        column_x((left - 1).min(COLUMNS - 1)),
+                                        row_y((top - 1).min(ROWS - 1)),
+                                    ),
+                                    pos2(
+                                        column_x((right - 1).min(COLUMNS - 1) + 1),
+                                        row_y((bottom - 1).min(ROWS - 1) + 1),
+                                    ),
+                                );
+                                region.rect_filled(cell, 0.0, REFERENCE);
+                            }
+
+                            let selection = Rect::from_min_max(
+                                pos2(column_x(left as usize - 1), row_y(top as usize - 1)),
+                                pos2(column_x(right as usize), row_y(bottom as usize)),
+                            );
+                            let fill = if top == bottom && left == right {
+                                SELECTED
+                            } else {
+                                RANGE_SELECTED
+                            };
+                            region.rect_filled(selection, 0.0, fill);
+                            region.rect_stroke(
+                                selection,
+                                0.0,
+                                Stroke::new(1.0, ACCENT),
+                                StrokeKind::Inside,
+                            );
+
+                            let active = Rect::from_min_max(
+                                pos2(
+                                    column_x(selected.col as usize - 1),
+                                    row_y(selected.row as usize - 1),
+                                ),
+                                pos2(
+                                    column_x(selected.col as usize),
+                                    row_y(selected.row as usize),
+                                ),
+                            );
+                            let active_format = sheet.format(&selected);
+                            let active_value = sheet.value(&selected);
+                            let active_text =
+                                display_value(&active_value, active_format.number_format);
+                            if !active_text.is_empty() {
+                                draw_text(
+                                    &region,
+                                    active.min + vec2(6.0, 4.0),
+                                    &active_text,
+                                    Color32::WHITE,
+                                    active_format.bold,
+                                );
+                            }
+                        };
+
+                        paint_region(&rows_visible, &columns_visible, body_pane, &painter);
+                        paint_overlays(body_pane, &painter);
+                        paint_region(&frozen_rows_visible, &columns_visible, top_pane, &painter);
+                        paint_overlays(top_pane, &painter);
+                        paint_region(
+                            &frozen_rows_visible,
+                            &frozen_columns_visible,
+                            corner_pane,
+                            &painter,
+                        );
+                        paint_overlays(corner_pane, &painter);
+                        paint_region(&rows_visible, &frozen_columns_visible, left_pane, &painter);
+                        paint_overlays(left_pane, &painter);
+
+                        let header_row = Rect::from_min_max(
+                            pos2(header_left, clip.top()),
+                            pos2(clip.right(), clip.top() + HEADER),
+                        );
+                        let header_column = Rect::from_min_max(
+                            pos2(clip.left(), clip.top() + HEADER),
+                            pos2(clip.left() + HEADER, clip.bottom()),
+                        );
+                        let header_corner = Rect::from_min_max(
+                            clip.min,
+                            pos2(clip.left() + HEADER, clip.top() + HEADER),
+                        );
+                        painter.rect_filled(header_row, 0.0, HEADER_FILL);
+                        painter.rect_filled(header_column, 0.0, HEADER_FILL);
+                        painter.rect_filled(header_corner, 0.0, HEADER_FILL);
+
+                        let frozen_header_columns = Rect::from_min_max(
+                            header_row.min,
+                            pos2(header_left + frozen_width, header_row.max.y),
+                        );
+                        let scrolling_header_columns = Rect::from_min_max(
+                            pos2(header_left + frozen_width, header_row.min.y),
+                            header_row.max,
+                        );
+                        let frozen_header_rows = Rect::from_min_max(
+                            header_column.min,
+                            pos2(header_column.max.x, header_top + frozen_height),
+                        );
+                        let scrolling_header_rows = Rect::from_min_max(
+                            pos2(header_column.min.x, header_top + frozen_height),
+                            header_column.max,
+                        );
+
+                        let paint_column_headers = |columns: &[usize], pane: Rect| {
+                            let region = painter.with_clip_rect(pane);
+                            for column in columns {
+                                let x = column_x(*column);
+                                let width = metrics.column_width(*column);
+                                region.text(
+                                    pos2(x + width / 2.0, clip.top() + HEADER / 2.0),
+                                    Align2::CENTER_CENTER,
+                                    CellRef::column_name(*column as u32 + 1),
+                                    FontId::proportional(12.0),
+                                    MUTED,
+                                );
+                            }
+                        };
+                        paint_column_headers(&frozen_columns_visible, frozen_header_columns);
+                        paint_column_headers(&columns_visible, scrolling_header_columns);
+
+                        let paint_row_headers = |rows: &[usize], pane: Rect| {
+                            let region = painter.with_clip_rect(pane);
+                            for row in rows {
+                                let y = row_y(*row);
+                                let height = metrics.row_height(*row);
+                                region.text(
+                                    pos2(clip.left() + HEADER / 2.0, y + height / 2.0),
+                                    Align2::CENTER_CENTER,
+                                    (*row + 1).to_string(),
+                                    FontId::proportional(12.0),
+                                    MUTED,
+                                );
+                            }
+                        };
+                        paint_row_headers(&frozen_rows_visible, frozen_header_rows);
+                        paint_row_headers(&rows_visible, scrolling_header_rows);
+
+                        if frozen_columns > 0 {
+                            let x = header_left + frozen_width;
+                            painter.line_segment(
+                                [pos2(x, clip.top()), pos2(x, clip.bottom())],
+                                Stroke::new(1.5, ACCENT),
+                            );
+                        }
+                        if frozen_rows > 0 {
+                            let y = header_top + frozen_height;
+                            painter.line_segment(
+                                [pos2(clip.left(), y), pos2(clip.right(), y)],
+                                Stroke::new(1.5, ACCENT),
+                            );
+                        }
+
+                        for column in frozen_columns_visible.iter().chain(columns_visible.iter()) {
+                            let x = column_x(*column + 1);
+                            if x < header_left
+                                || x > clip.right()
+                                || (*column >= frozen_columns && x < header_left + frozen_width)
+                            {
                                 continue;
                             }
-                            let cell = range_rect(
-                                &metrics,
-                                body_origin,
-                                (top - 1).min(ROWS - 1),
-                                (left - 1).min(COLUMNS - 1),
-                                (bottom - 1).min(ROWS - 1),
-                                (right - 1).min(COLUMNS - 1),
-                            );
-                            painter.rect_filled(cell, 0.0, REFERENCE);
-                        }
-
-                        let selection = range_rect(
-                            &metrics,
-                            body_origin,
-                            (top - 1) as usize,
-                            (left - 1) as usize,
-                            (bottom - 1) as usize,
-                            (right - 1) as usize,
-                        );
-                        let fill = if top == bottom && left == right {
-                            SELECTED
-                        } else {
-                            RANGE_SELECTED
-                        };
-                        painter.rect_filled(selection, 0.0, fill);
-                        painter.rect_stroke(
-                            selection,
-                            0.0,
-                            Stroke::new(1.0, ACCENT),
-                            StrokeKind::Inside,
-                        );
-
-                        let active = cell_rect(
-                            &metrics,
-                            body_origin,
-                            selected.row as usize - 1,
-                            selected.col as usize - 1,
-                        );
-                        let active_format = sheet.format(&selected);
-                        let active_value = sheet.value(&selected);
-                        let active_text = display_value(&active_value, active_format.number_format);
-                        if !active_text.is_empty() {
-                            draw_text(
-                                &painter,
-                                active.min + vec2(6.0, 4.0),
-                                &active_text,
-                                Color32::WHITE,
-                                active_format.bold,
-                            );
-                        }
-
-                        for column in first_column..last_column {
-                            let x = body_left + metrics.column_offsets[column + 1];
                             let handle = Rect::from_center_size(
-                                pos2(x, rect.top() + HEADER / 2.0),
+                                pos2(x, clip.top() + HEADER / 2.0),
                                 vec2(7.0, HEADER),
                             );
                             let handle_response = ui
@@ -1572,7 +1749,7 @@ impl App {
                             }
                             if handle_response.dragged() {
                                 resize_update = Some((
-                                    ResizeTarget::Column(column),
+                                    ResizeTarget::Column(*column),
                                     handle_response.drag_delta().x,
                                 ));
                             }
@@ -1580,13 +1757,19 @@ impl App {
                                 resize_stopped = true;
                             }
                         }
-                        for row in first_row..last_row {
-                            if metrics.is_hidden(row) {
+                        for row in frozen_rows_visible.iter().chain(rows_visible.iter()) {
+                            if metrics.is_hidden(*row) {
                                 continue;
                             }
-                            let y = body_top + metrics.row_offsets[row + 1];
+                            let y = row_y(*row + 1);
+                            if y < header_top
+                                || y > clip.bottom()
+                                || (*row >= frozen_rows && y < header_top + frozen_height)
+                            {
+                                continue;
+                            }
                             let handle = Rect::from_center_size(
-                                pos2(rect.left() + HEADER / 2.0, y),
+                                pos2(clip.left() + HEADER / 2.0, y),
                                 vec2(HEADER, 7.0),
                             );
                             let handle_response = ui
@@ -1601,7 +1784,7 @@ impl App {
                             }
                             if handle_response.dragged() {
                                 resize_update =
-                                    Some((ResizeTarget::Row(row), handle_response.drag_delta().y));
+                                    Some((ResizeTarget::Row(*row), handle_response.drag_delta().y));
                             }
                             if handle_response.drag_stopped() {
                                 resize_stopped = true;
@@ -1612,11 +1795,25 @@ impl App {
                             && let Some(position) = response.interact_pointer_pos()
                         {
                             let relative = position - rect.min;
-                            if relative.x > HEADER && relative.y > HEADER {
-                                let row = first_visible(&metrics.row_offsets, relative.y - HEADER)
+                            if relative.x > anchor.x + HEADER && relative.y > anchor.y + HEADER {
+                                let row_offset = if frozen_rows > 0
+                                    && relative.y < anchor.y + HEADER + frozen_height
+                                {
+                                    relative.y - anchor.y - HEADER
+                                } else {
+                                    relative.y - HEADER
+                                };
+                                let column_offset = if frozen_columns > 0
+                                    && relative.x < anchor.x + HEADER + frozen_width
+                                {
+                                    relative.x - anchor.x - HEADER
+                                } else {
+                                    relative.x - HEADER
+                                };
+                                let row = first_visible(&metrics.row_offsets, row_offset.max(0.0))
                                     .min(ROWS - 1);
                                 let column =
-                                    first_visible(&metrics.column_offsets, relative.x - HEADER)
+                                    first_visible(&metrics.column_offsets, column_offset.max(0.0))
                                         .min(COLUMNS - 1);
                                 let extend = ui.input(|input| input.modifiers.shift);
                                 clicked =
@@ -2084,7 +2281,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_visible_cells_and_rects() {
+    fn finds_visible_cells() {
         let mut sheet = Sheet::new();
         sheet.set_column_width(2, Some(200));
         let metrics = GridMetrics::new(&sheet);
@@ -2093,12 +2290,25 @@ mod tests {
         assert_eq!(first_visible(&metrics.column_offsets, 205.0), 1);
         assert_eq!(last_visible(&metrics.column_offsets, 100.0), 1);
         assert_eq!(last_visible(&metrics.column_offsets, 205.0), 2);
+    }
 
-        let origin = pos2(0.0, 0.0);
-        let second = cell_rect(&metrics, origin, 0, 1);
-        assert_eq!(second.min, pos2(104.0, 0.0));
-        assert_eq!(second.max, pos2(304.0, f32::from(DEFAULT_ROW_HEIGHT)));
-        let range = range_rect(&metrics, origin, 0, 0, 0, 1);
-        assert_eq!(range.max.x, 304.0);
+    #[test]
+    fn freezes_above_and_left_of_the_active_cell_and_unfreezes() {
+        let mut app = test_app();
+        app.selected = CellRef::new(3, 2);
+        app.anchor = app.selected;
+        app.toggle_freeze();
+        assert_eq!(app.sheet().freeze_panes(), Some((2, 1)));
+        assert_eq!(app.undo.len(), 1);
+
+        app.toggle_freeze();
+        assert_eq!(app.sheet().freeze_panes(), None);
+        assert_eq!(app.undo.len(), 2);
+
+        app.selected = CellRef::new(1, 1);
+        app.anchor = app.selected;
+        app.toggle_freeze();
+        assert_eq!(app.sheet().freeze_panes(), None);
+        assert!(!app.status_ok);
     }
 }

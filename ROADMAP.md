@@ -51,7 +51,7 @@ enough to replace a browser spreadsheet for everyday work.
 - [x] Multiple sheets
 - [x] Sorting and filtering
 - [x] Charts
-- [ ] Freeze panes
+- [x] Freeze panes
 
 ## v0.5 Distribution
 

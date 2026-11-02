@@ -11,6 +11,7 @@ pub struct Sheet {
     formats: BTreeMap<CellRef, CellFormat>,
     column_widths: BTreeMap<u32, u16>,
     row_heights: BTreeMap<u32, u16>,
+    freeze_panes: Option<(u32, u32)>,
 }
 
 impl Sheet {
@@ -70,6 +71,14 @@ impl Sheet {
                 self.row_heights.remove(&row);
             }
         }
+    }
+
+    pub fn freeze_panes(&self) -> Option<(u32, u32)> {
+        self.freeze_panes
+    }
+
+    pub fn set_freeze_panes(&mut self, rows: u32, columns: u32) {
+        self.freeze_panes = (rows != 0 || columns != 0).then_some((rows, columns));
     }
 
     pub fn column_widths(&self) -> impl Iterator<Item = (&u32, &u16)> {
@@ -623,6 +632,18 @@ mod tests {
         sheet.set_row_height(3, None);
         assert_eq!(sheet.column_width(2), None);
         assert_eq!(sheet.row_height(3), None);
+    }
+
+    #[test]
+    fn stores_freeze_panes() {
+        let mut sheet = Sheet::new();
+        assert_eq!(sheet.freeze_panes(), None);
+        sheet.set_freeze_panes(1, 0);
+        assert_eq!(sheet.freeze_panes(), Some((1, 0)));
+        sheet.set_freeze_panes(2, 3);
+        assert_eq!(sheet.freeze_panes(), Some((2, 3)));
+        sheet.set_freeze_panes(0, 0);
+        assert_eq!(sheet.freeze_panes(), None);
     }
 
     #[test]
